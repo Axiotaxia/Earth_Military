@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { supabase, ROBLOX_CLIENT_ID, OWNER_ROBLOX_ID, DbUser, UserPermissions } from '@/lib/supabase';
+import { ROBLOX_CLIENT_ID, DbUser, UserPermissions } from '@/lib/supabase';
 
 interface AuthUser extends DbUser {
   permissions: UserPermissions | null;
@@ -18,7 +18,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const SESSION_KEY = 'ek_session_user_id';
+const SESSION_KEY = 'ek_session_user';
 
 function getBaseUrl(): string {
   return window.location.origin;
@@ -41,46 +41,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [robloxAuthUrl] = useState(() => buildRobloxAuthUrl());
 
-  const fetchUser = useCallback(async (userId: string): Promise<AuthUser | null> => {
-    const { data: dbUser, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-    if (error || !dbUser) return null;
-
-    const { data: perms } = await supabase
-      .from('user_permissions')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    const isOwner = dbUser.roblox_user_id === OWNER_ROBLOX_ID;
-
-    return {
-      ...dbUser,
-      permissions: perms,
-      is_owner: isOwner,
-    };
-  }, []);
-
   const refreshUser = useCallback(async () => {
-    const userId = localStorage.getItem(SESSION_KEY);
-    if (!userId) {
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (!stored) {
       setUser(null);
       setLoading(false);
       return;
     }
-
-    const u = await fetchUser(userId);
-    if (!u) {
+    try {
+      const parsed: AuthUser = JSON.parse(stored);
+      setUser(parsed);
+    } catch {
       localStorage.removeItem(SESSION_KEY);
       setUser(null);
-    } else {
-      setUser(u);
     }
     setLoading(false);
-  }, [fetchUser]);
+  }, []);
 
   useEffect(() => {
     refreshUser();
@@ -112,10 +88,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
 
-      localStorage.setItem(SESSION_KEY, data.user_id);
-      await refreshUser();
+      const authUser: AuthUser = {
+        ...data.user,
+        permissions: data.permissions,
+        is_owner: data.is_owner,
+      };
+
+      localStorage.setItem(SESSION_KEY, JSON.stringify(authUser));
+      setUser(authUser);
+      setLoading(false);
     },
-    [refreshUser]
+    []
   );
 
   const logout = useCallback(() => {
