@@ -190,15 +190,24 @@ Deno.serve(async (req: Request) => {
         event_data: { timestamp: new Date().toISOString() },
       });
 
+      // Fetch full user record + permissions to send back (avoids client-side RLS reads)
+      const { data: fullUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      const { data: perms } = await supabase
+        .from("user_permissions")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
       return new Response(
         JSON.stringify({
-          user_id: userId,
-          roblox_user_id: robloxUserId,
-          roblox_username: userInfo.name,
-          roblox_display_name: userInfo.nickname,
-          roblox_avatar_url: userInfo.picture,
-          group_rank: groupRole.rank,
-          group_rank_name: groupRole.name,
+          user: fullUser,
+          permissions: perms,
+          is_owner: robloxUserId === OWNER_ROBLOX_ID,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
