@@ -1,0 +1,158 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});
+
+export const ROBLOX_CLIENT_ID = '4235495123293811435';
+export const ROBLOX_GROUP_ID = 592750791;
+export const OWNER_ROBLOX_ID = 593587739;
+
+export const ROBLOX_RANKS: { rank: number; name: string }[] = [
+  { rank: 0, name: 'Guest' },
+  { rank: 1, name: 'Citizen' },
+  { rank: 2, name: 'Private' },
+  { rank: 3, name: 'Soldier' },
+  { rank: 4, name: 'Corporal' },
+  { rank: 5, name: 'Sergeant' },
+  { rank: 6, name: 'Lieutenant' },
+  { rank: 7, name: 'Captain' },
+  { rank: 8, name: 'General' },
+  { rank: 9, name: 'High Council' },
+  { rank: 10, name: 'Royal Guard' },
+  { rank: 11, name: 'Agent' },
+  { rank: 12, name: 'Commander' },
+  { rank: 13, name: 'Grand Secretariat' },
+  { rank: 14, name: 'Princess' },
+  { rank: 15, name: 'Prince' },
+  { rank: 16, name: 'King' },
+  { rank: 254, name: 'GroupRank' },
+  { rank: 255, name: 'Holder' },
+];
+
+export const POINT_REASONS = [
+  { label: 'Recruiting someone to Private (+10)', points: 10, event_type: 'recruiting', reason: 'Recruited someone to Private' },
+  { label: 'Attending an official raid (+4)', points: 4, event_type: 'official_raid', reason: 'Attended an official raid' },
+  { label: 'Cohosting (+3)', points: 3, event_type: 'cohosting', reason: 'Cohosted an event' },
+  { label: 'Responding to a reinforcement call (+1)', points: 1, event_type: 'reinforcement', reason: 'Responded to a reinforcement call' },
+  { label: 'Successful guarding (+2)', points: 2, event_type: 'guarding_success', reason: 'Successful guarding' },
+  { label: 'Disruptive guarding (-4)', points: -4, event_type: 'guarding_disruptive', reason: 'Disruptive guarding' },
+  { label: 'Attending a training (+1)', points: 1, event_type: 'training_attend', reason: 'Attended a training' },
+  { label: 'Winning an event (+1)', points: 1, event_type: 'event_win', reason: 'Won an event' },
+  { label: 'Disruptive at training (-4)', points: -4, event_type: 'training_disruptive', reason: 'Disruptive at training' },
+] as const;
+
+export const TIMEZONES = [
+  'UTC',
+  'EST (UTC-5)',
+  'CST (UTC-6)',
+  'MST (UTC-7)',
+  'PST (UTC-8)',
+  'AKST (UTC-9)',
+  'HST (UTC-10)',
+  'GMT (UTC+0)',
+  'CET (UTC+1)',
+  'EET (UTC+2)',
+  'MSK (UTC+3)',
+  'IST (UTC+5:30)',
+  'CST China (UTC+8)',
+  'JST (UTC+9)',
+  'AEST (UTC+10)',
+  'NZST (UTC+12)',
+  'AST (UTC-4)',
+  'BRT (UTC-3)',
+] as const;
+
+export const PATHS = [
+  'Infantry',
+  'Cavalry',
+  'Artillery',
+  'Engineering',
+  'Intelligence',
+  'Diplomacy',
+  'Logistics',
+  'Medical',
+] as const;
+
+export interface DbUser {
+  id: string;
+  roblox_user_id: number;
+  roblox_username: string;
+  roblox_display_name: string | null;
+  roblox_avatar_url: string | null;
+  group_rank: number;
+  group_rank_name: string;
+  timezone: string | null;
+  selected_path: string | null;
+  main_sub: string | null;
+  onboarded: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Division {
+  id: string;
+  name: string;
+  icon: string | null;
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface DivisionRank {
+  id: string;
+  division_id: string;
+  name: string;
+  hierarchy: number;
+  can_create_divisions: boolean;
+  can_create_ranks: boolean;
+  can_promote: boolean;
+  can_award_points: boolean;
+  can_view_hr_panel: boolean;
+  can_manage_members: boolean;
+  created_at: string;
+}
+
+export interface DivisionMember {
+  id: string;
+  user_id: string;
+  division_id: string;
+  division_rank_id: string | null;
+  joined_at: string;
+}
+
+export interface PointTransaction {
+  id: string;
+  user_id: string;
+  awarded_by: string | null;
+  points: number;
+  reason: string;
+  event_type: string | null;
+  created_at: string;
+}
+
+export interface UserPermissions {
+  id: string;
+  user_id: string;
+  can_create_divisions: boolean;
+  can_create_ranks: boolean;
+  can_promote: boolean;
+  can_award_points: boolean;
+  can_view_hr_panel: boolean;
+  can_manage_members: boolean;
+  is_owner: boolean;
+}
+
+export interface ActivityLog {
+  id: string;
+  user_id: string;
+  event_type: string;
+  event_data: Record<string, unknown> | null;
+  created_at: string;
+}

@@ -1,0 +1,2 @@
+[functions.roblox-oauth]
+verify_jwt = false

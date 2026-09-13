@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --ek-green-50: #f0f7f0;
+  --ek-green-100: #d9ecd9;
+  --ek-green-200: #b3d9b3;
+  --ek-green-300: #7fbf7f;
+  --ek-green-400: #4a9f4a;
+  --ek-green-500: #2d7a2d;
+  --ek-green-600: #1f5f1f;
+  --ek-green-700: #1a4d1a;
+  --ek-green-800: #143d14;
+  --ek-green-900: #0d2d0d;
+  --ek-green-950: #061a06;
+
+  --ek-gold-50: #fdf9ed;
+  --ek-gold-100: #faf0cc;
+  --ek-gold-200: #f5e099;
+  --ek-gold-300: #eeca60;
+  --ek-gold-400: #e6b53a;
+  --ek-gold-500: #d49a20;
+  --ek-gold-600: #b87d18;
+  --ek-gold-700: #946016;
+  --ek-gold-800: #7a4d18;
+  --ek-gold-900: #684018;
+
+  --ek-clay-50: #faf6f2;
+  --ek-clay-100: #f0e6da;
+  --ek-clay-200: #e0cdb8;
+  --ek-clay-300: #cda98a;
+  --ek-clay-400: #b88860;
+  --ek-clay-500: #a06d44;
+  --ek-clay-600: #875836;
+  --ek-clay-700: #6d4630;
+  --ek-clay-800: #5a3a2a;
+  --ek-clay-900: #4b3123;
+}
+
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    @apply bg-stone-900 text-stone-100;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Cinzel', serif;
+  }
+}
+
+@layer components {
+  .ek-panel {
+    @apply bg-stone-800/80 border border-stone-700 rounded-lg backdrop-blur-sm;
+  }
+
+  .ek-panel-light {
+    @apply bg-stone-800/50 border border-stone-700/50 rounded-lg;
+  }
+
+  .ek-btn {
+    @apply px-4 py-2 rounded-md font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .ek-btn-primary {
+    @apply bg-green-700 hover:bg-green-600 text-white shadow-lg shadow-green-900/30;
+  }
+
+  .ek-btn-gold {
+    @apply bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/30;
+  }
+
+  .ek-btn-ghost {
+    @apply bg-transparent hover:bg-stone-700/50 text-stone-300 border border-stone-600;
+  }
+
+  .ek-btn-danger {
+    @apply bg-red-700 hover:bg-red-600 text-white;
+  }
+
+  .ek-input {
+    @apply bg-stone-900/60 border border-stone-600 rounded-md px-3 py-2 text-stone-100 placeholder-stone-500
+           focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors;
+  }
+
+  .ek-label {
+    @apply block text-sm font-medium text-stone-300 mb-1;
+  }
+
+  .ek-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .ek-section-title {
+    @apply text-lg font-semibold text-green-400 border-b border-stone-700 pb-2 mb-4;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #1c1917;
+}
+::-webkit-scrollbar-thumb {
+  background: #44403c;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #57534e;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(45, 122, 45, 0.1), transparent);
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
