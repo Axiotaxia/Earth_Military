@@ -83,7 +83,7 @@ export function Profile() {
           {user.roblox_avatar_url ? (
             <img
               src={user.roblox_avatar_url}
-              alt={user.roblox_display_name}
+              alt={user.roblox_display_name || undefined}
               className="w-24 h-24 rounded-full border-2 border-amber-600/40 shadow-lg"
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />

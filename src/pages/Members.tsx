@@ -102,7 +102,7 @@ export function Members() {
               {m.roblox_avatar_url ? (
                 <img
                   src={m.roblox_avatar_url}
-                  alt={m.roblox_display_name}
+                  alt={m.roblox_display_name || undefined}
                   className="w-12 h-12 rounded-full border border-stone-600 flex-shrink-0"
                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
@@ -172,7 +172,7 @@ function MemberModal({ member, onClose }: { member: MemberWithDetails; onClose: 
           {member.roblox_avatar_url ? (
             <img
               src={member.roblox_avatar_url}
-              alt={member.roblox_display_name}
+              alt={member.roblox_display_name || undefined}
               className="w-16 h-16 rounded-full border-2 border-amber-600/40"
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />

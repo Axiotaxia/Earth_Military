@@ -88,7 +88,7 @@ export function Layout({ children }: { children: ReactNode }) {
             {user.roblox_avatar_url ? (
               <img
                 src={user.roblox_avatar_url}
-                alt={user.roblox_display_name}
+                alt={user.roblox_display_name || undefined}
                 className="w-10 h-10 rounded-full border border-stone-600"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
