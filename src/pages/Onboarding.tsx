@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, TIMEZONES, PATHS } from '@/lib/supabase';
+import { supabase, TIMEZONES, PATHS, PATH_DESCRIPTIONS, SUBS } from '@/lib/supabase';
 import { Mountain, Clock, Compass, Shield, Loader2, Check } from 'lucide-react';
 
 export function Onboarding() {
@@ -126,20 +126,23 @@ export function Onboarding() {
                 <h2 className="text-lg font-semibold text-stone-200">Choose Your Path</h2>
               </div>
               <p className="text-stone-400 text-sm mb-4">
-                Select your military specialization within the Earth Kingdom.
+                Select your military path within the Earth Kingdom.
               </p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-3">
                 {PATHS.map((p) => (
                   <button
                     key={p}
                     onClick={() => setSelectedPath(p)}
-                    className={`p-3 rounded-md text-sm font-medium border transition-all ${
+                    className={`w-full text-left p-4 rounded-md border transition-all ${
                       selectedPath === p
                         ? 'bg-green-700/30 border-green-500 text-green-400'
                         : 'bg-stone-800/50 border-stone-700 text-stone-400 hover:border-stone-600'
                     }`}
                   >
-                    {p}
+                    <p className="text-sm font-semibold mb-1">{p}</p>
+                    <p className={`text-xs leading-relaxed ${selectedPath === p ? 'text-green-300/70' : 'text-stone-500'}`}>
+                      {PATH_DESCRIPTIONS[p]}
+                    </p>
                   </button>
                 ))}
               </div>
@@ -153,16 +156,18 @@ export function Onboarding() {
                 <h2 className="text-lg font-semibold text-stone-200">Main Sub</h2>
               </div>
               <p className="text-stone-400 text-sm mb-4">
-                Enter your main subdivision or specialization within your chosen path.
+                Select your main subdivision within your chosen path.
               </p>
-              <input
-                type="text"
+              <select
                 value={mainSub}
                 onChange={(e) => setMainSub(e.target.value)}
-                placeholder="e.g., Heavy Infantry, Scout Division..."
                 className="ek-input w-full"
-                maxLength={100}
-              />
+              >
+                <option value="">Choose your sub...</option>
+                {SUBS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
             </div>
           )}
 

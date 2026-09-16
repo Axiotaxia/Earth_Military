@@ -70,14 +70,19 @@ export const TIMEZONES = [
 ] as const;
 
 export const PATHS = [
-  'Infantry',
-  'Cavalry',
-  'Artillery',
-  'Engineering',
-  'Intelligence',
-  'Diplomacy',
-  'Logistics',
-  'Medical',
+  'Guard Path',
+  'High Rank Path',
+] as const;
+
+export const PATH_DESCRIPTIONS: Record<string, string> = {
+  'Guard Path': 'Dedicate yourself to the protection of the Earth Kingdom and its royal family, serving as a defender of the Kingdom.',
+  'High Rank Path': "Earn your place among the Earth Kingdom's leadership through dedication, activity, and diplomatic skill, rising through the ranks of the kingdom.",
+};
+
+export const SUBS = [
+  'Lava',
+  'Metal',
+  'Sand',
 ] as const;
 
 export interface DbUser {

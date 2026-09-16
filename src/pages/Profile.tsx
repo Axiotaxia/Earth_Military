@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, TIMEZONES, PATHS, PointTransaction, Division, DivisionRank } from '@/lib/supabase';
+import { supabase, TIMEZONES, PATHS, SUBS, PointTransaction, Division, DivisionRank } from '@/lib/supabase';
 import {
   Shield, Clock, Compass, Award, Users, Save, Loader2, Check, History,
 } from 'lucide-react';
@@ -161,14 +161,10 @@ export function Profile() {
             <label className="ek-label flex items-center gap-1.5">
               <Shield className="w-3.5 h-3.5" /> Main Sub
             </label>
-            <input
-              type="text"
-              value={mainSub}
-              onChange={(e) => setMainSub(e.target.value)}
-              placeholder="Your main subdivision"
-              className="ek-input w-full"
-              maxLength={100}
-            />
+            <select value={mainSub} onChange={(e) => setMainSub(e.target.value)} className="ek-input w-full">
+              <option value="">Select sub...</option>
+              {SUBS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
           </div>
         </div>
         <div className="flex items-center gap-3 mt-5">
