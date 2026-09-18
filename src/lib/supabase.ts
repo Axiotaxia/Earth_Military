@@ -36,18 +36,6 @@ export const ROBLOX_RANKS: { rank: number; name: string }[] = [
   { rank: 255, name: 'Holder' },
 ];
 
-export const POINT_REASONS = [
-  { label: 'Recruiting someone to Private (+10)', points: 10, event_type: 'recruiting', reason: 'Recruited someone to Private' },
-  { label: 'Attending an official raid (+4)', points: 4, event_type: 'official_raid', reason: 'Attended an official raid' },
-  { label: 'Cohosting (+3)', points: 3, event_type: 'cohosting', reason: 'Cohosted an event' },
-  { label: 'Responding to a reinforcement call (+1)', points: 1, event_type: 'reinforcement', reason: 'Responded to a reinforcement call' },
-  { label: 'Successful guarding (+2)', points: 2, event_type: 'guarding_success', reason: 'Successful guarding' },
-  { label: 'Disruptive guarding (-4)', points: -4, event_type: 'guarding_disruptive', reason: 'Disruptive guarding' },
-  { label: 'Attending a training (+1)', points: 1, event_type: 'training_attend', reason: 'Attended a training' },
-  { label: 'Winning an event (+1)', points: 1, event_type: 'event_win', reason: 'Won an event' },
-  { label: 'Disruptive at training (-4)', points: -4, event_type: 'training_disruptive', reason: 'Disruptive at training' },
-] as const;
-
 export const TIMEZONES = [
   'UTC',
   'EST (UTC-5)',
@@ -105,6 +93,7 @@ export interface Division {
   id: string;
   name: string;
   icon: string | null;
+  logo_url: string | null;
   description: string | null;
   created_by: string | null;
   created_at: string;
@@ -121,6 +110,7 @@ export interface DivisionRank {
   can_award_points: boolean;
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
+  can_edit_point_types: boolean;
   created_at: string;
 }
 
@@ -151,7 +141,20 @@ export interface UserPermissions {
   can_award_points: boolean;
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
+  can_edit_point_types: boolean;
   is_owner: boolean;
+}
+
+export interface PointEventType {
+  id: string;
+  label: string;
+  reason: string;
+  points: number;
+  event_type: string;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ActivityLog {

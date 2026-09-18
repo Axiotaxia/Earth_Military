@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react';
-import { supabase, Division, DivisionRank, DivisionMember, DbUser } from '@/lib/supabase';
+import { useNavigate } from 'react-router-dom';
+import { supabase, Division } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import {
-  Swords, Plus, Users, X, Save, Loader2, Trash2, UserPlus, Shield,
+  Swords, Plus, Users, X, Save, Loader2, Image as ImageIcon,
 } from 'lucide-react';
 
 export function Divisions() {
   const { user } = useAuth();
   const perms = usePermissions();
+  const navigate = useNavigate();
   const [divisions, setDivisions] = useState<(Division & { member_count: number })[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedDivision, setSelectedDivision] = useState<Division | null>(null);
 
   useEffect(() => {
     loadDivisions();
@@ -63,12 +64,21 @@ export function Divisions() {
           {divisions.map((d) => (
             <button
               key={d.id}
-              onClick={() => setSelectedDivision(d)}
+              onClick={() => navigate(`/divisions/${d.id}`)}
               className="ek-panel p-5 text-left hover:border-green-700/50 transition-all group"
             >
               <div className="flex items-start justify-between mb-3">
-                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl">
-                  {d.icon || <Swords className="w-6 h-6 text-amber-400" />}
+                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl overflow-hidden">
+                  {d.logo_url ? (
+                    <img
+                      src={d.logo_url}
+                      alt={d.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : (
+                    d.icon || <Swords className="w-6 h-6 text-amber-400" />
+                  )}
                 </div>
                 <div className="flex items-center gap-1 text-stone-400">
                   <Users className="w-4 h-4" />
@@ -91,16 +101,6 @@ export function Divisions() {
           onCreated={() => { setShowCreate(false); loadDivisions(); }}
         />
       )}
-
-      {selectedDivision && (
-        <DivisionDetailModal
-          division={selectedDivision}
-          userId={user!.id}
-          canManage={perms.can_manage_members}
-          onClose={() => setSelectedDivision(null)}
-          onChanged={loadDivisions}
-        />
-      )}
     </div>
   );
 }
@@ -110,6 +110,7 @@ function CreateDivisionModal({
 }: { userId: string; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +121,7 @@ function CreateDivisionModal({
     const { error: insertError } = await supabase.from('divisions').insert({
       name: name.trim(),
       icon: icon.trim() || null,
+      logo_url: logoUrl.trim() || null,
       description: description.trim() || null,
       created_by: userId,
     });
@@ -141,8 +143,22 @@ function CreateDivisionModal({
             <input value={name} onChange={(e) => setName(e.target.value)} className="ek-input w-full" placeholder="e.g., Earth Guard" maxLength={50} />
           </div>
           <div>
-            <label className="ek-label">Icon (emoji or symbol)</label>
+            <label className="ek-label">Icon (emoji or symbol, used as fallback)</label>
             <input value={icon} onChange={(e) => setIcon(e.target.value)} className="ek-input w-full" placeholder="e.g., ⚔️" maxLength={10} />
+          </div>
+          <div>
+            <label className="ek-label flex items-center gap-1.5">
+              <ImageIcon className="w-3.5 h-3.5" /> Logo Image URL (PNG, optional)
+            </label>
+            <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} className="ek-input w-full" placeholder="https://example.com/logo.png" />
+            {logoUrl.trim() && (
+              <img
+                src={logoUrl.trim()}
+                alt="Logo preview"
+                className="w-14 h-14 rounded-md object-cover mt-2 border border-stone-700"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            )}
           </div>
           <div>
             <label className="ek-label">Description</label>
@@ -154,209 +170,6 @@ function CreateDivisionModal({
             Create
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function DivisionDetailModal({
-  division, userId, canManage, onClose, onChanged,
-}: {
-  division: Division;
-  userId: string;
-  canManage: boolean;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
-  const [ranks, setRanks] = useState<DivisionRank[]>([]);
-  const [members, setMembers] = useState<(DivisionMember & { username: string; display_name: string | null; avatar: string | null })[]>([]);
-  const [allUsers, setAllUsers] = useState<DbUser[]>([]);
-  const [showAddMember, setShowAddMember] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [selectedRankId, setSelectedRankId] = useState('');
-
-  useEffect(() => {
-    (async () => {
-      const { data: r } = await supabase
-        .from('division_ranks')
-        .select('*')
-        .eq('division_id', division.id)
-        .order('hierarchy', { ascending: false });
-      setRanks(r || []);
-
-      const { data: dm } = await supabase
-        .from('division_members')
-        .select('*')
-        .eq('division_id', division.id);
-      const memberUserIds = (dm || []).map((m) => m.user_id);
-      let userMap = new Map<string, DbUser>();
-      if (memberUserIds.length > 0) {
-        const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
-        (mu || []).forEach((u) => userMap.set(u.id, u));
-      }
-      const enriched = (dm || []).map((m) => {
-        const u = userMap.get(m.user_id);
-        return {
-          ...m,
-          username: u?.roblox_username || 'Unknown',
-          display_name: u?.roblox_display_name || null,
-          avatar: u?.roblox_avatar_url || null,
-        };
-      });
-      setMembers(enriched);
-
-      const { data: au } = await supabase.from('users').select('*').order('roblox_username');
-      setAllUsers(au || []);
-    })();
-  }, [division.id]);
-
-  const handleAddMember = async () => {
-    if (!selectedUserId) return;
-    const { error } = await supabase.from('division_members').insert({
-      user_id: selectedUserId,
-      division_id: division.id,
-      division_rank_id: selectedRankId || null,
-    });
-    if (!error) {
-      setShowAddMember(false);
-      setSelectedUserId('');
-      setSelectedRankId('');
-      // Reload modal data
-      const { data: dm } = await supabase.from('division_members').select('*').eq('division_id', division.id);
-      const memberUserIds = (dm || []).map((m) => m.user_id);
-      let userMap = new Map<string, DbUser>();
-      if (memberUserIds.length > 0) {
-        const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
-        (mu || []).forEach((u) => userMap.set(u.id, u));
-      }
-      setMembers((dm || []).map((m) => {
-        const u = userMap.get(m.user_id);
-        return { ...m, username: u?.roblox_username || 'Unknown', display_name: u?.roblox_display_name || null, avatar: u?.roblox_avatar_url || null };
-      }));
-      onChanged();
-    }
-  };
-
-  const handleRemoveMember = async (memberId: string) => {
-    await supabase.from('division_members').delete().eq('id', memberId);
-    setMembers(members.filter((m) => m.id !== memberId));
-    onChanged();
-  };
-
-  const handleDeleteDivision = async () => {
-    if (!confirm(`Delete division "${division.name}"? This will remove all members and ranks.`)) return;
-    await supabase.from('divisions').delete().eq('id', division.id);
-    onClose();
-    onChanged();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="ek-panel max-w-2xl w-full p-6 animate-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-xl">
-              {division.icon || <Swords className="w-5 h-5 text-amber-400" />}
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-amber-400">{division.name}</h2>
-              {division.description && <p className="text-sm text-stone-500">{division.description}</p>}
-            </div>
-          </div>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-200"><X className="w-5 h-5" /></button>
-        </div>
-
-        {/* Ranks */}
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-stone-300 mb-2 flex items-center gap-2">
-            <Shield className="w-4 h-4 text-green-500" /> Ranks ({ranks.length})
-          </h3>
-          {ranks.length === 0 ? (
-            <p className="text-stone-500 text-sm">No ranks defined yet.</p>
-          ) : (
-            <div className="space-y-1">
-              {ranks.map((r) => (
-                <div key={r.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
-                  <div>
-                    <span className="text-sm text-stone-200">{r.name}</span>
-                    <span className="text-xs text-stone-500 ml-2">Hierarchy: {r.hierarchy}</span>
-                  </div>
-                  <div className="flex gap-1">
-                    {r.can_promote && <span className="ek-badge bg-green-900/40 text-green-400 text-[10px]">Promote</span>}
-                    {r.can_award_points && <span className="ek-badge bg-amber-900/40 text-amber-400 text-[10px]">Points</span>}
-                    {r.can_manage_members && <span className="ek-badge bg-blue-900/40 text-blue-400 text-[10px]">Manage</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Members */}
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2">
-              <Users className="w-4 h-4 text-green-500" /> Members ({members.length})
-            </h3>
-            {canManage && (
-              <button onClick={() => setShowAddMember(!showAddMember)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-1 py-1.5 px-3">
-                <UserPlus className="w-3.5 h-3.5" /> Add Member
-              </button>
-            )}
-          </div>
-
-          {showAddMember && (
-            <div className="ek-panel-light p-3 mb-3 space-y-2">
-              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="ek-input w-full">
-                <option value="">Select user...</option>
-                {allUsers
-                  .filter((u) => !members.some((m) => m.user_id === u.id))
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>{u.roblox_display_name || u.roblox_username}</option>
-                  ))}
-              </select>
-              <select value={selectedRankId} onChange={(e) => setSelectedRankId(e.target.value)} className="ek-input w-full">
-                <option value="">No rank (unranked)</option>
-                {ranks.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-              <button onClick={handleAddMember} className="ek-btn ek-btn-primary w-full text-sm">Add</button>
-            </div>
-          )}
-
-          {members.length === 0 ? (
-            <p className="text-stone-500 text-sm">No members in this division.</p>
-          ) : (
-            <div className="space-y-1">
-              {members.map((m) => {
-                const rank = ranks.find((r) => r.id === m.division_rank_id);
-                return (
-                  <div key={m.id} className="flex items-center gap-3 p-2 bg-stone-800/50 rounded-md">
-                    {m.avatar ? (
-                      <img src={m.avatar} alt={m.display_name || m.username} className="w-8 h-8 rounded-full" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-4 h-4 text-stone-400" /></div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-stone-200 truncate">{m.display_name || m.username}</p>
-                      {rank && <p className="text-xs text-amber-500">{rank.name}</p>}
-                    </div>
-                    {canManage && (
-                      <button onClick={() => handleRemoveMember(m.id)} className="text-stone-500 hover:text-red-400">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {canManage && (
-          <button onClick={handleDeleteDivision} className="ek-btn ek-btn-danger w-full text-sm flex items-center justify-center gap-2">
-            <Trash2 className="w-4 h-4" /> Delete Division
-          </button>
-        )}
       </div>
     </div>
   );

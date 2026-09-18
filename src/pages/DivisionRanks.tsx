@@ -92,6 +92,7 @@ export function DivisionRanks() {
                       {r.can_award_points && <Perm label="Award Points" />}
                       {r.can_view_hr_panel && <Perm label="HR Panel" />}
                       {r.can_manage_members && <Perm label="Manage Members" />}
+                      {r.can_edit_point_types && <Perm label="Edit Point Types" />}
                     </div>
                   </div>
                   {perms.can_create_ranks && (
@@ -174,6 +175,7 @@ function RankModal({
     can_award_points: rank?.can_award_points || false,
     can_view_hr_panel: rank?.can_view_hr_panel || false,
     can_manage_members: rank?.can_manage_members || false,
+    can_edit_point_types: rank?.can_edit_point_types || false,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +209,7 @@ function RankModal({
     { key: 'can_award_points', label: 'Can award points' },
     { key: 'can_view_hr_panel', label: 'Can view HR panel' },
     { key: 'can_manage_members', label: 'Can manage members' },
+    { key: 'can_edit_point_types', label: 'Can edit point event types' },
   ];
 
   return (

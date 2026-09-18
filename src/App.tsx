@@ -8,6 +8,7 @@ import { Dashboard } from '@/pages/Dashboard';
 import { Profile } from '@/pages/Profile';
 import { Members } from '@/pages/Members';
 import { Divisions } from '@/pages/Divisions';
+import { DivisionDetail } from '@/pages/DivisionDetail';
 import { DivisionRanks } from '@/pages/DivisionRanks';
 import { Promotions } from '@/pages/Promotions';
 import { Points } from '@/pages/Points';
@@ -85,6 +86,7 @@ function AppRoutes() {
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
       <Route path="/divisions" element={<ProtectedRoute><Divisions /></ProtectedRoute>} />
+      <Route path="/divisions/:id" element={<ProtectedRoute><DivisionDetail /></ProtectedRoute>} />
       <Route path="/division-ranks" element={<ProtectedRoute><DivisionRanks /></ProtectedRoute>} />
       <Route path="/promotions" element={<ProtectedRoute><Promotions /></ProtectedRoute>} />
       <Route path="/points" element={<ProtectedRoute><Points /></ProtectedRoute>} />

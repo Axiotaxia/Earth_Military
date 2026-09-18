@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
-import { supabase, DbUser, Division, DivisionRank } from '@/lib/supabase';
-import { Search, Users, Shield, Award, Clock, Compass, X, ChevronRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
+} from '@/lib/supabase';
+import { usePermissions } from '@/lib/permissions';
+import {
+  Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
+  Save, Loader2, Check, UserMinus,
+} from 'lucide-react';
 
 interface MemberWithDetails extends DbUser {
   division_name: string | null;
@@ -8,13 +14,33 @@ interface MemberWithDetails extends DbUser {
   military_points: number;
 }
 
+interface DivisionMembership {
+  membershipId: string;
+  divisionId: string;
+  divisionRankId: string | null;
+}
+
+const EMPTY_FILTERS = {
+  sub: '',
+  timezone: '',
+  divisionId: '',
+  robloxRank: '',
+  divisionRankId: '',
+  path: '',
+};
+
 export function Members() {
+  const perms = usePermissions();
   const [members, setMembers] = useState<MemberWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<MemberWithDetails | null>(null);
   const [divisions, setDivisions] = useState<Map<string, Division>>(new Map());
   const [ranks, setRanks] = useState<Map<string, DivisionRank>>(new Map());
+  const [memberDivisionRankId, setMemberDivisionRankId] = useState<Map<string, string>>(new Map());
+  const [membershipByUser, setMembershipByUser] = useState<Map<string, DivisionMembership>>(new Map());
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
 
   useEffect(() => {
     loadMembers();
@@ -55,37 +81,125 @@ export function Members() {
       });
     }
 
+    setMemberDivisionRankId(new Map(allMembers?.map((m) => [m.user_id, m.division_rank_id || '']) || []));
+    setMembershipByUser(new Map((allMembers || []).map((m) => [m.user_id, {
+      membershipId: m.id,
+      divisionId: m.division_id,
+      divisionRankId: m.division_rank_id,
+    }])));
     setMembers(enriched);
     setLoading(false);
   };
 
-  const filtered = members.filter((m) => {
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  const filtered = useMemo(() => members.filter((m) => {
     const q = search.toLowerCase();
-    return (
+    const matchesSearch = (
       m.roblox_username.toLowerCase().includes(q) ||
       (m.roblox_display_name || '').toLowerCase().includes(q) ||
       m.group_rank_name.toLowerCase().includes(q) ||
       (m.division_name || '').toLowerCase().includes(q)
     );
-  });
+    if (!matchesSearch) return false;
+
+    if (filters.sub && m.main_sub !== filters.sub) return false;
+    if (filters.timezone && m.timezone !== filters.timezone) return false;
+    if (filters.path && m.selected_path !== filters.path) return false;
+    if (filters.robloxRank && String(m.group_rank) !== filters.robloxRank) return false;
+    if (filters.divisionId) {
+      const memberDivName = m.division_name;
+      const filterDivName = divisions.get(filters.divisionId)?.name;
+      if (!memberDivName || memberDivName !== filterDivName) return false;
+    }
+    if (filters.divisionRankId && memberDivisionRankId.get(m.id) !== filters.divisionRankId) return false;
+
+    return true;
+  }), [members, search, filters, divisions, memberDivisionRankId]);
+
+  const divisionRankOptions = Array.from(ranks.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const divisionOptions = Array.from(divisions.values()).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
           Military Profiles
         </h1>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search members..."
-            className="ek-input pl-9 w-64"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search members..."
+              className="ek-input pl-9 w-64"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`ek-btn text-sm flex items-center gap-2 ${showFilters || activeFilterCount > 0 ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
+          >
+            <Filter className="w-4 h-4" /> Filters
+            {activeFilterCount > 0 && (
+              <span className="ek-badge bg-stone-900/60 text-xs">{activeFilterCount}</span>
+            )}
+          </button>
         </div>
       </div>
+
+      {showFilters && (
+        <div className="ek-panel p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="ek-label">Sub</label>
+            <select value={filters.sub} onChange={(e) => setFilters({ ...filters, sub: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {SUBS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ek-label">Timezone</label>
+            <select value={filters.timezone} onChange={(e) => setFilters({ ...filters, timezone: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {TIMEZONES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ek-label">Division</label>
+            <select value={filters.divisionId} onChange={(e) => setFilters({ ...filters, divisionId: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {divisionOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ek-label">Roblox Rank</label>
+            <select value={filters.robloxRank} onChange={(e) => setFilters({ ...filters, robloxRank: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {ROBLOX_RANKS.map((r) => <option key={r.rank} value={String(r.rank)}>{r.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ek-label">Division Rank</label>
+            <select value={filters.divisionRankId} onChange={(e) => setFilters({ ...filters, divisionRankId: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {divisionRankOptions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ek-label">Selected Path</label>
+            <select value={filters.path} onChange={(e) => setFilters({ ...filters, path: e.target.value })} className="ek-input w-full">
+              <option value="">All</option>
+              {PATHS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
+            <button onClick={() => setFilters(EMPTY_FILTERS)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-2">
+              <RotateCcw className="w-3.5 h-3.5" /> Clear Filters
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-12 text-stone-500">Loading members...</div>
@@ -145,14 +259,74 @@ export function Members() {
       {selectedMember && (
         <MemberModal
           member={selectedMember}
+          canManage={perms.can_manage_members}
+          divisions={divisionOptions}
+          allRanks={Array.from(ranks.values())}
+          membership={membershipByUser.get(selectedMember.id) || null}
           onClose={() => setSelectedMember(null)}
+          onChanged={loadMembers}
         />
       )}
     </div>
   );
 }
 
-function MemberModal({ member, onClose }: { member: MemberWithDetails; onClose: () => void }) {
+function MemberModal({
+  member, canManage, divisions, allRanks, membership, onClose, onChanged,
+}: {
+  member: MemberWithDetails;
+  canManage: boolean;
+  divisions: Division[];
+  allRanks: DivisionRank[];
+  membership: DivisionMembership | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [divisionId, setDivisionId] = useState(membership?.divisionId || '');
+  const [divisionRankId, setDivisionRankId] = useState(membership?.divisionRankId || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ranksForDivision = allRanks.filter((r) => r.division_id === divisionId);
+
+  const handleAssign = async () => {
+    if (!divisionId) { setError('Select a division first.'); return; }
+    setSaving(true);
+    setError(null);
+
+    if (membership) {
+      const { error: e } = await supabase
+        .from('division_members')
+        .update({ division_id: divisionId, division_rank_id: divisionRankId || null })
+        .eq('id', membership.membershipId);
+      if (e) { setError(e.message); setSaving(false); return; }
+    } else {
+      const { error: e } = await supabase.from('division_members').insert({
+        user_id: member.id,
+        division_id: divisionId,
+        division_rank_id: divisionRankId || null,
+      });
+      if (e) { setError(e.message); setSaving(false); return; }
+    }
+
+    setSaving(false);
+    setSaved(true);
+    onChanged();
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  const handleRemoveFromDivision = async () => {
+    if (!membership) return;
+    if (!confirm('Remove this member from their division?')) return;
+    setSaving(true);
+    await supabase.from('division_members').delete().eq('id', membership.membershipId);
+    setDivisionId('');
+    setDivisionRankId('');
+    setSaving(false);
+    onChanged();
+  };
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
@@ -198,6 +372,43 @@ function MemberModal({ member, onClose }: { member: MemberWithDetails; onClose: 
           <Row icon={Shield} label="Main Sub" value={member.main_sub || 'Not set'} />
           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
         </div>
+
+        {canManage && (
+          <div className="mt-5 pt-5 border-t border-stone-700">
+            <h4 className="ek-label mb-2">Assign to Division</h4>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <select
+                value={divisionId}
+                onChange={(e) => { setDivisionId(e.target.value); setDivisionRankId(''); }}
+                className="ek-input w-full"
+              >
+                <option value="">Select division...</option>
+                {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <select
+                value={divisionRankId}
+                onChange={(e) => setDivisionRankId(e.target.value)}
+                className="ek-input w-full"
+                disabled={!divisionId}
+              >
+                <option value="">No rank (unranked)</option>
+                {ranksForDivision.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+            <div className="flex items-center gap-2 mt-3">
+              <button onClick={handleAssign} disabled={saving} className="ek-btn ek-btn-primary flex-1 flex items-center justify-center gap-2 text-sm">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                {saved ? 'Saved!' : membership ? 'Update Assignment' : 'Assign'}
+              </button>
+              {membership && (
+                <button onClick={handleRemoveFromDivision} disabled={saving} className="ek-btn ek-btn-danger flex items-center gap-2 text-sm">
+                  <UserMinus className="w-4 h-4" /> Remove
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

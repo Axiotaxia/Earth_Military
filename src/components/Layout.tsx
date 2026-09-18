@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { usePermissions } from '@/lib/permissions';
 import {
@@ -19,19 +19,22 @@ export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const perms = usePermissions();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (!user) return <>{children}</>;
+
+  const onDivisionsTab = location.pathname.startsWith('/divisions');
 
   const navLinks: NavLink[] = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
     { to: '/profile', label: 'My Profile', icon: Shield, show: true },
     { to: '/members', label: 'Member Profiles', icon: Users, show: true },
     { to: '/divisions', label: 'Divisions', icon: Swords, show: true },
-    { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: perms.can_promote },
+    { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: onDivisionsTab && perms.can_promote },
     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
-    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: perms.can_create_ranks },
+    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
   ];
 
   const handleLogout = () => {
@@ -161,7 +164,7 @@ function NavItem({
   to, label, icon: Icon, onClick,
 }: NavLink & { onClick: () => void }) {
   const navigate = useNavigate();
-  const location = window.location.pathname;
+  const location = useLocation().pathname;
 
   const isActive = location === to || (to !== '/dashboard' && location.startsWith(to));
 

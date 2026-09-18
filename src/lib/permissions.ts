@@ -8,6 +8,7 @@ export interface ResolvedPermissions {
   can_award_points: boolean;
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
+  can_edit_point_types: boolean;
   is_owner: boolean;
 }
 
@@ -22,6 +23,7 @@ export function usePermissions(): ResolvedPermissions {
       can_award_points: false,
       can_view_hr_panel: false,
       can_manage_members: false,
+      can_edit_point_types: false,
       is_owner: false,
     };
   }
@@ -34,6 +36,7 @@ export function usePermissions(): ResolvedPermissions {
       can_award_points: true,
       can_view_hr_panel: true,
       can_manage_members: true,
+      can_edit_point_types: true,
       is_owner: true,
     };
   }
@@ -46,6 +49,7 @@ export function usePermissions(): ResolvedPermissions {
     can_award_points: perms?.can_award_points || false,
     can_view_hr_panel: perms?.can_view_hr_panel || false,
     can_manage_members: perms?.can_manage_members || false,
+    can_edit_point_types: perms?.can_edit_point_types || false,
     is_owner: false,
   };
 }
@@ -76,6 +80,7 @@ export async function getDivisionPermissions(
     can_award_points: rank.can_award_points,
     can_view_hr_panel: rank.can_view_hr_panel,
     can_manage_members: rank.can_manage_members,
+    can_edit_point_types: rank.can_edit_point_types,
     is_owner: false,
   };
 }
