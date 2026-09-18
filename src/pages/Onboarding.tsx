@@ -44,12 +44,6 @@ export function Onboarding() {
       return;
     }
 
-    await supabase.from('activity_log').insert({
-      user_id: user.id,
-      event_type: 'onboarding_complete',
-      event_data: { timezone, selected_path: selectedPath, main_sub: mainSub },
-    });
-
     await refreshUser();
     setSaving(false);
     navigate('/dashboard');

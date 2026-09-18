@@ -4,37 +4,51 @@ import { supabase, Division } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import {
-  Swords, Plus, Users, X, Save, Loader2, Image as ImageIcon,
+  Swords, Plus, Users, X, Save, Loader2, Image as ImageIcon, Shield,
 } from 'lucide-react';
 
 export function Divisions() {
   const { user } = useAuth();
   const perms = usePermissions();
   const navigate = useNavigate();
-  const [divisions, setDivisions] = useState<(Division & { member_count: number })[]>([]);
+  const [divisions, setDivisions] = useState<(Division & { member_count: number; rank_count: number })[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
 
+  // Users who can manage divisions get the full overview list; everyone else who
+  // already belongs to a division is sent straight to it instead of browsing.
+  const canManageDivisions = perms.is_owner || perms.can_create_divisions || perms.can_create_ranks || perms.can_manage_members;
+
   useEffect(() => {
+    if (!canManageDivisions && user?.division_id) {
+      navigate(`/divisions/${user.division_id}`, { replace: true });
+      return;
+    }
     loadDivisions();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageDivisions, user?.division_id]);
 
   const loadDivisions = async () => {
     setLoading(true);
     const { data: divs } = await supabase.from('divisions').select('*').order('name');
 
-    const enriched: (Division & { member_count: number })[] = [];
+    const enriched: (Division & { member_count: number; rank_count: number })[] = [];
     for (const d of divs || []) {
-      const { count } = await supabase
-        .from('division_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('division_id', d.id);
-      enriched.push({ ...d, member_count: count || 0 });
+      const [{ count: memberCount }, { count: rankCount }] = await Promise.all([
+        supabase.from('division_members').select('*', { count: 'exact', head: true }).eq('division_id', d.id),
+        supabase.from('division_ranks').select('*', { count: 'exact', head: true }).eq('division_id', d.id),
+      ]);
+      enriched.push({ ...d, member_count: memberCount || 0, rank_count: rankCount || 0 });
     }
 
     setDivisions(enriched);
     setLoading(false);
   };
+
+  // Regular members with a division are redirected away before this ever renders
+  if (!canManageDivisions && user?.division_id) {
+    return <div className="text-center py-12 text-stone-500">Taking you to your division...</div>;
+  }
 
   return (
     <div className="space-y-4">
@@ -60,15 +74,15 @@ export function Divisions() {
           )}
         </div>
       ) : (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 gap-5">
           {divisions.map((d) => (
             <button
               key={d.id}
               onClick={() => navigate(`/divisions/${d.id}`)}
-              className="ek-panel p-5 text-left hover:border-green-700/50 transition-all group"
+              className="ek-panel p-6 text-left hover:border-green-700/50 transition-all group"
             >
-              <div className="flex items-start justify-between mb-3">
-                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl overflow-hidden">
+              <div className="flex items-start gap-4">
+                <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-4xl overflow-hidden flex-shrink-0">
                   {d.logo_url ? (
                     <img
                       src={d.logo_url}
@@ -77,18 +91,24 @@ export function Divisions() {
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
                   ) : (
-                    d.icon || <Swords className="w-6 h-6 text-amber-400" />
+                    d.icon || <Swords className="w-9 h-9 text-amber-400" />
                   )}
                 </div>
-                <div className="flex items-center gap-1 text-stone-400">
-                  <Users className="w-4 h-4" />
-                  <span className="text-sm">{d.member_count}</span>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-xl font-semibold text-stone-100 group-hover:text-green-400 transition-colors truncate">
+                    {d.name}
+                  </h3>
+                  {d.description && <p className="text-sm text-stone-500 mt-1 line-clamp-2">{d.description}</p>}
+                  <div className="flex items-center gap-4 mt-3">
+                    <span className="flex items-center gap-1.5 text-sm text-stone-400">
+                      <Users className="w-4 h-4" /> {d.member_count} member{d.member_count !== 1 ? 's' : ''}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-sm text-stone-400">
+                      <Shield className="w-4 h-4" /> {d.rank_count} rank{d.rank_count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <h3 className="text-lg font-semibold text-stone-100 group-hover:text-green-400 transition-colors">
-                {d.name}
-              </h3>
-              {d.description && <p className="text-sm text-stone-500 mt-1 line-clamp-2">{d.description}</p>}
             </button>
           ))}
         </div>

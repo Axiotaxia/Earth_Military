@@ -157,6 +157,20 @@ export interface PointEventType {
   updated_at: string;
 }
 
+export interface GroupRankPermissions {
+  id: string;
+  group_rank: number;
+  can_create_divisions: boolean;
+  can_create_ranks: boolean;
+  can_promote: boolean;
+  can_award_points: boolean;
+  can_view_hr_panel: boolean;
+  can_manage_members: boolean;
+  can_edit_point_types: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ActivityLog {
   id: string;
   user_id: string;

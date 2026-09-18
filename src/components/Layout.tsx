@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePermissions } from '@/lib/permissions';
 import {
   Shield, LayoutDashboard, Users, Swords, Award, BarChart3,
-  Settings, LogOut, Menu, X, Crown, ChevronRight,
+  Settings, LogOut, Menu, X, Crown, ChevronRight, ShieldAlert,
 } from 'lucide-react';
 
 interface NavLink {
@@ -35,6 +35,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
     { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
+    { to: '/admin', label: 'Admin Panel', icon: ShieldAlert, permission: 'is_owner', show: perms.is_owner },
   ];
 
   const handleLogout = () => {

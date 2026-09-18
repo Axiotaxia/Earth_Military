@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { supabase, DbUser, Division, DivisionRank, DivisionMember, ROBLOX_RANKS } from '@/lib/supabase';
+import { supabase, DbUser, Division, DivisionRank, DivisionMember } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { usePermissions } from '@/lib/permissions';
 import {
-  ChevronRight, Search, X, Save, Loader2, Users, Shield, ArrowUp, Check,
+  Search, X, Save, Loader2, Users, Shield, ArrowUp, Check,
 } from 'lucide-react';
 
 export function Promotions() {
@@ -19,13 +19,22 @@ export function Promotions() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  const restrictedToOwnDivision = user?.promote_scope === 'division_only';
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from('divisions').select('*').order('name');
-      setDivisions(data || []);
-      if (data && data.length > 0) setSelectedDiv(data[0]);
+      let visibleDivisions = data || [];
+
+      // Division-only promoters can only see and act within their own division
+      if (restrictedToOwnDivision && user?.division_id) {
+        visibleDivisions = visibleDivisions.filter((d) => d.id === user.division_id);
+      }
+
+      setDivisions(visibleDivisions);
+      if (visibleDivisions.length > 0) setSelectedDiv(visibleDivisions[0]);
     })();
-  }, []);
+  }, [restrictedToOwnDivision, user?.division_id]);
 
   useEffect(() => {
     if (!selectedDiv) return;
@@ -43,7 +52,7 @@ export function Promotions() {
         .eq('division_id', selectedDiv.id);
 
       const memberUserIds = (dm || []).map((m) => m.user_id);
-      let userMap = new Map<string, DbUser>();
+      const userMap = new Map<string, DbUser>();
       if (memberUserIds.length > 0) {
         const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
         (mu || []).forEach((u) => userMap.set(u.id, u));
@@ -78,7 +87,12 @@ export function Promotions() {
     );
   });
 
-  // Can only promote members with lower group rank (only non-Roblox division ranks)
+  // Promotion eligibility:
+  // - Owners and global promoters (user_permissions or group-rank granted) can promote
+  //   anyone with a lower Roblox group rank, in any division.
+  // - Division-only promoters (permission granted solely via their division rank) only
+  //   ever see their own division here (the division list above is pre-filtered), so
+  //   this just checks the group-rank requirement.
   const canPromoteMember = (m: { user: DbUser; rank: DivisionRank | null }) => {
     if (!user) return false;
     if (user.is_owner) return true;
@@ -117,7 +131,7 @@ export function Promotions() {
               .select('*')
               .eq('division_id', selectedDiv.id);
             const memberUserIds = (dm || []).map((m) => m.user_id);
-            let userMap = new Map<string, DbUser>();
+            const userMap = new Map<string, DbUser>();
             if (memberUserIds.length > 0) {
               const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
               (mu || []).forEach((u) => userMap.set(u.id, u));
@@ -143,20 +157,34 @@ export function Promotions() {
       </h1>
       <p className="text-sm text-stone-400">
         You can only promote members with lower group rank. Division ranks only — Roblox group ranks cannot be changed here.
+        {restrictedToOwnDivision && ' You can only promote or demote members within your own division.'}
       </p>
 
-      {/* Division selector */}
-      <div className="flex flex-wrap gap-2">
-        {divisions.map((d) => (
-          <button
-            key={d.id}
-            onClick={() => setSelectedDiv(d)}
-            className={`ek-btn text-sm ${selectedDiv?.id === d.id ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
-          >
-            {d.icon} {d.name}
-          </button>
-        ))}
-      </div>
+      {/* Division selector — hidden when there's only one division to act in */}
+      {divisions.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {divisions.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => setSelectedDiv(d)}
+              className={`ek-btn text-sm ${selectedDiv?.id === d.id ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
+            >
+              {d.icon} {d.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {divisions.length === 0 && (
+        <div className="ek-panel p-12 text-center">
+          <Shield className="w-12 h-12 text-stone-600 mx-auto mb-3" />
+          <p className="text-stone-400">
+            {restrictedToOwnDivision
+              ? 'You are not currently assigned to a division.'
+              : 'No divisions have been created yet.'}
+          </p>
+        </div>
+      )}
 
       {selectedDiv && (
         <>

@@ -183,13 +183,6 @@ Deno.serve(async (req: Request) => {
           }, { onConflict: "user_id" });
       }
 
-      // Log activity
-      await supabase.from("activity_log").insert({
-        user_id: userId,
-        event_type: "login",
-        event_data: { timestamp: new Date().toISOString() },
-      });
-
       return new Response(
         JSON.stringify({
           user_id: userId,
