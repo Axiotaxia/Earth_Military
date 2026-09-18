@@ -1,0 +1,1644 @@
+From 4f0b7bcad02b86106d33a5cddc82de6cffb16eb7 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 18 Sep 2026 00:54:29 +0000
+Subject: [PATCH] Improve divisions: dedicated pages, custom logos,
+ profile-based assignment, configurable point event types
+
+- Hide Promotions/Division Ranks nav tabs unless on Divisions tab
+- Add filters to Member Profiles (sub, timezone, division, roblox rank, division rank, path)
+- Add /divisions/:id page with hierarchy, members, and activity tabs
+- Add logo_url field for custom division logos (URL-based)
+- Move member-to-division assignment into member profile modal
+- Add can_edit_point_types permission and DB-backed point_event_types table with management UI
+---
+ src/App.tsx                                   |   2 +
+ src/components/Layout.tsx                     |  11 +-
+ src/lib/permissions.ts                        |   5 +
+ src/lib/supabase.ts                           |  27 +-
+ src/pages/DivisionDetail.tsx                  | 401 ++++++++++++++++++
+ src/pages/DivisionRanks.tsx                   |   3 +
+ src/pages/Divisions.tsx                       | 253 ++---------
+ src/pages/Members.tsx                         | 245 ++++++++++-
+ src/pages/Points.tsx                          | 242 +++++++++--
+ ...18120000_003_divisions_and_point_types.sql |  74 ++++
+ 10 files changed, 986 insertions(+), 277 deletions(-)
+ create mode 100644 src/pages/DivisionDetail.tsx
+ create mode 100644 supabase/migrations/20260918120000_003_divisions_and_point_types.sql
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 80c2165..a80de17 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -8,6 +8,7 @@ import { Dashboard } from '@/pages/Dashboard';
+ import { Profile } from '@/pages/Profile';
+ import { Members } from '@/pages/Members';
+ import { Divisions } from '@/pages/Divisions';
++import { DivisionDetail } from '@/pages/DivisionDetail';
+ import { DivisionRanks } from '@/pages/DivisionRanks';
+ import { Promotions } from '@/pages/Promotions';
+ import { Points } from '@/pages/Points';
+@@ -85,6 +86,7 @@ function AppRoutes() {
+       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+       <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
+       <Route path="/divisions" element={<ProtectedRoute><Divisions /></ProtectedRoute>} />
++      <Route path="/divisions/:id" element={<ProtectedRoute><DivisionDetail /></ProtectedRoute>} />
+       <Route path="/division-ranks" element={<ProtectedRoute><DivisionRanks /></ProtectedRoute>} />
+       <Route path="/promotions" element={<ProtectedRoute><Promotions /></ProtectedRoute>} />
+       <Route path="/points" element={<ProtectedRoute><Points /></ProtectedRoute>} />
+diff --git a/src/components/Layout.tsx b/src/components/Layout.tsx
+index 04d223f..0800017 100644
+--- a/src/components/Layout.tsx
++++ b/src/components/Layout.tsx
+@@ -1,5 +1,5 @@
+ import { ReactNode, useState } from 'react';
+-import { Link, useNavigate } from 'react-router-dom';
++import { Link, useNavigate, useLocation } from 'react-router-dom';
+ import { useAuth } from '@/context/AuthContext';
+ import { usePermissions } from '@/lib/permissions';
+ import {
+@@ -19,19 +19,22 @@ export function Layout({ children }: { children: ReactNode }) {
+   const { user, logout } = useAuth();
+   const perms = usePermissions();
+   const navigate = useNavigate();
++  const location = useLocation();
+   const [sidebarOpen, setSidebarOpen] = useState(false);
+ 
+   if (!user) return <>{children}</>;
+ 
++  const onDivisionsTab = location.pathname.startsWith('/divisions');
++
+   const navLinks: NavLink[] = [
+     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: true },
+     { to: '/profile', label: 'My Profile', icon: Shield, show: true },
+     { to: '/members', label: 'Member Profiles', icon: Users, show: true },
+     { to: '/divisions', label: 'Divisions', icon: Swords, show: true },
+-    { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: perms.can_promote },
++    { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: onDivisionsTab && perms.can_promote },
+     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
+     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
+-    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: perms.can_create_ranks },
++    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
+   ];
+ 
+   const handleLogout = () => {
+@@ -161,7 +164,7 @@ function NavItem({
+   to, label, icon: Icon, onClick,
+ }: NavLink & { onClick: () => void }) {
+   const navigate = useNavigate();
+-  const location = window.location.pathname;
++  const location = useLocation().pathname;
+ 
+   const isActive = location === to || (to !== '/dashboard' && location.startsWith(to));
+ 
+diff --git a/src/lib/permissions.ts b/src/lib/permissions.ts
+index 518897c..ed1dbc7 100644
+--- a/src/lib/permissions.ts
++++ b/src/lib/permissions.ts
+@@ -8,6 +8,7 @@ export interface ResolvedPermissions {
+   can_award_points: boolean;
+   can_view_hr_panel: boolean;
+   can_manage_members: boolean;
++  can_edit_point_types: boolean;
+   is_owner: boolean;
+ }
+ 
+@@ -22,6 +23,7 @@ export function usePermissions(): ResolvedPermissions {
+       can_award_points: false,
+       can_view_hr_panel: false,
+       can_manage_members: false,
++      can_edit_point_types: false,
+       is_owner: false,
+     };
+   }
+@@ -34,6 +36,7 @@ export function usePermissions(): ResolvedPermissions {
+       can_award_points: true,
+       can_view_hr_panel: true,
+       can_manage_members: true,
++      can_edit_point_types: true,
+       is_owner: true,
+     };
+   }
+@@ -46,6 +49,7 @@ export function usePermissions(): ResolvedPermissions {
+     can_award_points: perms?.can_award_points || false,
+     can_view_hr_panel: perms?.can_view_hr_panel || false,
+     can_manage_members: perms?.can_manage_members || false,
++    can_edit_point_types: perms?.can_edit_point_types || false,
+     is_owner: false,
+   };
+ }
+@@ -76,6 +80,7 @@ export async function getDivisionPermissions(
+     can_award_points: rank.can_award_points,
+     can_view_hr_panel: rank.can_view_hr_panel,
+     can_manage_members: rank.can_manage_members,
++    can_edit_point_types: rank.can_edit_point_types,
+     is_owner: false,
+   };
+ }
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+index 2ad9b93..5af76df 100644
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -36,18 +36,6 @@ export const ROBLOX_RANKS: { rank: number; name: string }[] = [
+   { rank: 255, name: 'Holder' },
+ ];
+ 
+-export const POINT_REASONS = [
+-  { label: 'Recruiting someone to Private (+10)', points: 10, event_type: 'recruiting', reason: 'Recruited someone to Private' },
+-  { label: 'Attending an official raid (+4)', points: 4, event_type: 'official_raid', reason: 'Attended an official raid' },
+-  { label: 'Cohosting (+3)', points: 3, event_type: 'cohosting', reason: 'Cohosted an event' },
+-  { label: 'Responding to a reinforcement call (+1)', points: 1, event_type: 'reinforcement', reason: 'Responded to a reinforcement call' },
+-  { label: 'Successful guarding (+2)', points: 2, event_type: 'guarding_success', reason: 'Successful guarding' },
+-  { label: 'Disruptive guarding (-4)', points: -4, event_type: 'guarding_disruptive', reason: 'Disruptive guarding' },
+-  { label: 'Attending a training (+1)', points: 1, event_type: 'training_attend', reason: 'Attended a training' },
+-  { label: 'Winning an event (+1)', points: 1, event_type: 'event_win', reason: 'Won an event' },
+-  { label: 'Disruptive at training (-4)', points: -4, event_type: 'training_disruptive', reason: 'Disruptive at training' },
+-] as const;
+-
+ export const TIMEZONES = [
+   'UTC',
+   'EST (UTC-5)',
+@@ -105,6 +93,7 @@ export interface Division {
+   id: string;
+   name: string;
+   icon: string | null;
++  logo_url: string | null;
+   description: string | null;
+   created_by: string | null;
+   created_at: string;
+@@ -121,6 +110,7 @@ export interface DivisionRank {
+   can_award_points: boolean;
+   can_view_hr_panel: boolean;
+   can_manage_members: boolean;
++  can_edit_point_types: boolean;
+   created_at: string;
+ }
+ 
+@@ -151,9 +141,22 @@ export interface UserPermissions {
+   can_award_points: boolean;
+   can_view_hr_panel: boolean;
+   can_manage_members: boolean;
++  can_edit_point_types: boolean;
+   is_owner: boolean;
+ }
+ 
++export interface PointEventType {
++  id: string;
++  label: string;
++  reason: string;
++  points: number;
++  event_type: string;
++  sort_order: number;
++  created_by: string | null;
++  created_at: string;
++  updated_at: string;
++}
++
+ export interface ActivityLog {
+   id: string;
+   user_id: string;
+diff --git a/src/pages/DivisionDetail.tsx b/src/pages/DivisionDetail.tsx
+new file mode 100644
+index 0000000..5b8fe08
+--- /dev/null
++++ b/src/pages/DivisionDetail.tsx
+@@ -0,0 +1,401 @@
++import { useEffect, useState } from 'react';
++import { useParams, useNavigate, Link } from 'react-router-dom';
++import {
++  supabase, Division, DivisionRank, DivisionMember, DbUser, ActivityLog,
++} from '@/lib/supabase';
++import { usePermissions } from '@/lib/permissions';
++import {
++  Swords, Users, Shield, ArrowLeft, Settings, Trash2, Save, Loader2, X,
++  Image as ImageIcon, Activity, Award, UserMinus,
++} from 'lucide-react';
++
++interface EnrichedMember extends DivisionMember {
++  user: DbUser | null;
++  rank: DivisionRank | null;
++}
++
++interface EnrichedActivity extends ActivityLog {
++  user: DbUser | null;
++}
++
++export function DivisionDetail() {
++  const { id } = useParams<{ id: string }>();
++  const navigate = useNavigate();
++  const perms = usePermissions();
++
++  const [division, setDivision] = useState<Division | null>(null);
++  const [ranks, setRanks] = useState<DivisionRank[]>([]);
++  const [members, setMembers] = useState<EnrichedMember[]>([]);
++  const [activity, setActivity] = useState<EnrichedActivity[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [showEdit, setShowEdit] = useState(false);
++  const [tab, setTab] = useState<'hierarchy' | 'members' | 'activity'>('hierarchy');
++
++  useEffect(() => {
++    if (id) loadAll(id);
++  }, [id]);
++
++  const loadAll = async (divisionId: string) => {
++    setLoading(true);
++
++    const { data: div } = await supabase.from('divisions').select('*').eq('id', divisionId).maybeSingle();
++    setDivision(div);
++
++    const { data: r } = await supabase
++      .from('division_ranks')
++      .select('*')
++      .eq('division_id', divisionId)
++      .order('hierarchy', { ascending: false });
++    setRanks(r || []);
++
++    const { data: dm } = await supabase
++      .from('division_members')
++      .select('*')
++      .eq('division_id', divisionId);
++
++    const memberUserIds = (dm || []).map((m) => m.user_id);
++    const userMap = new Map<string, DbUser>();
++    if (memberUserIds.length > 0) {
++      const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
++      (mu || []).forEach((u) => userMap.set(u.id, u));
++    }
++    const rankMap = new Map<string, DivisionRank>((r || []).map((rk) => [rk.id, rk]));
++
++    const enrichedMembers: EnrichedMember[] = (dm || []).map((m) => ({
++      ...m,
++      user: userMap.get(m.user_id) || null,
++      rank: m.division_rank_id ? rankMap.get(m.division_rank_id) || null : null,
++    }));
++    setMembers(enrichedMembers);
++
++    if (memberUserIds.length > 0) {
++      const { data: acts } = await supabase
++        .from('activity_log')
++        .select('*')
++        .in('user_id', memberUserIds)
++        .order('created_at', { ascending: false })
++        .limit(30);
++      setActivity((acts || []).map((a) => ({ ...a, user: userMap.get(a.user_id) || null })));
++    } else {
++      setActivity([]);
++    }
++
++    setLoading(false);
++  };
++
++  const handleRemoveMember = async (memberId: string) => {
++    if (!confirm('Remove this member from the division?')) return;
++    await supabase.from('division_members').delete().eq('id', memberId);
++    if (id) loadAll(id);
++  };
++
++  const handleDeleteDivision = async () => {
++    if (!division) return;
++    if (!confirm(`Delete division "${division.name}"? This will remove all members and ranks.`)) return;
++    await supabase.from('divisions').delete().eq('id', division.id);
++    navigate('/divisions');
++  };
++
++  if (loading) {
++    return <div className="text-center py-12 text-stone-500">Loading division...</div>;
++  }
++
++  if (!division) {
++    return (
++      <div className="ek-panel p-12 text-center">
++        <Swords className="w-12 h-12 text-stone-600 mx-auto mb-3" />
++        <p className="text-stone-400">Division not found.</p>
++        <Link to="/divisions" className="ek-btn ek-btn-ghost mt-4 inline-flex items-center gap-2">
++          <ArrowLeft className="w-4 h-4" /> Back to Divisions
++        </Link>
++      </div>
++    );
++  }
++
++  // Group members by rank hierarchy (descending), unranked at bottom
++  const membersByRank = new Map<string, EnrichedMember[]>();
++  const unranked: EnrichedMember[] = [];
++  members.forEach((m) => {
++    if (m.rank) {
++      const list = membersByRank.get(m.rank.id) || [];
++      list.push(m);
++      membersByRank.set(m.rank.id, list);
++    } else {
++      unranked.push(m);
++    }
++  });
++
++  return (
++    <div className="space-y-4">
++      <div className="flex items-center gap-3">
++        <button onClick={() => navigate('/divisions')} className="text-stone-400 hover:text-stone-200">
++          <ArrowLeft className="w-5 h-5" />
++        </button>
++        <div className="w-14 h-14 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl overflow-hidden flex-shrink-0">
++          {division.logo_url ? (
++            <img
++              src={division.logo_url}
++              alt={division.name}
++              className="w-full h-full object-cover"
++              onError={(e) => { e.currentTarget.style.display = 'none'; }}
++            />
++          ) : (
++            division.icon || <Swords className="w-7 h-7 text-amber-400" />
++          )}
++        </div>
++        <div className="flex-1 min-w-0">
++          <h1 className="text-xl font-bold text-amber-400 truncate" style={{ fontFamily: 'Cinzel, serif' }}>
++            {division.name}
++          </h1>
++          {division.description && <p className="text-sm text-stone-500 truncate">{division.description}</p>}
++        </div>
++        {perms.can_manage_members && (
++          <button onClick={() => setShowEdit(true)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-2">
++            <Settings className="w-4 h-4" /> Edit
++          </button>
++        )}
++        {perms.can_create_ranks && (
++          <button onClick={() => navigate('/division-ranks')} className="ek-btn ek-btn-ghost text-sm flex items-center gap-2">
++            <Shield className="w-4 h-4" /> Ranks
++          </button>
++        )}
++      </div>
++
++      {/* Tabs */}
++      <div className="flex gap-2 border-b border-stone-800">
++        <TabButton active={tab === 'hierarchy'} onClick={() => setTab('hierarchy')} icon={Shield} label="Hierarchy" />
++        <TabButton active={tab === 'members'} onClick={() => setTab('members')} icon={Users} label={`Members (${members.length})`} />
++        <TabButton active={tab === 'activity'} onClick={() => setTab('activity')} icon={Activity} label="Activity" />
++      </div>
++
++      {tab === 'hierarchy' && (
++        <div className="space-y-4">
++          {ranks.length === 0 ? (
++            <div className="ek-panel p-12 text-center">
++              <Shield className="w-12 h-12 text-stone-600 mx-auto mb-3" />
++              <p className="text-stone-400">No ranks defined for this division yet.</p>
++              {perms.can_create_ranks && (
++                <button onClick={() => navigate('/division-ranks')} className="ek-btn ek-btn-gold mt-4 text-sm">
++                  Create Ranks
++                </button>
++              )}
++            </div>
++          ) : (
++            ranks.map((r) => {
++              const rankMembers = membersByRank.get(r.id) || [];
++              return (
++                <div key={r.id} className="ek-panel p-4">
++                  <div className="flex items-center justify-between mb-3">
++                    <div className="flex items-center gap-2">
++                      <Shield className="w-4 h-4 text-green-500" />
++                      <h3 className="text-sm font-semibold text-stone-100">{r.name}</h3>
++                      <span className="text-xs text-stone-500">Hierarchy {r.hierarchy}</span>
++                    </div>
++                    <span className="text-xs text-stone-500">{rankMembers.length} member{rankMembers.length !== 1 ? 's' : ''}</span>
++                  </div>
++                  {rankMembers.length === 0 ? (
++                    <p className="text-stone-600 text-sm">No members hold this rank.</p>
++                  ) : (
++                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
++                      {rankMembers.map((m) => (
++                        <MemberChip key={m.id} member={m} />
++                      ))}
++                    </div>
++                  )}
++                </div>
++              );
++            })
++          )}
++          {unranked.length > 0 && (
++            <div className="ek-panel p-4">
++              <h3 className="text-sm font-semibold text-stone-400 mb-3">Unranked</h3>
++              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
++                {unranked.map((m) => <MemberChip key={m.id} member={m} />)}
++              </div>
++            </div>
++          )}
++        </div>
++      )}
++
++      {tab === 'members' && (
++        <div className="ek-panel p-4">
++          <p className="text-xs text-stone-500 mb-3">
++            To add a member to this division, go to their member profile and assign them there.
++          </p>
++          {members.length === 0 ? (
++            <p className="text-stone-500 text-sm text-center py-6">No members in this division.</p>
++          ) : (
++            <div className="space-y-1">
++              {members.map((m) => (
++                <div key={m.id} className="flex items-center gap-3 p-2 bg-stone-800/50 rounded-md">
++                  {m.user?.roblox_avatar_url ? (
++                    <img src={m.user.roblox_avatar_url} alt="" className="w-8 h-8 rounded-full" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
++                  ) : (
++                    <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-4 h-4 text-stone-400" /></div>
++                  )}
++                  <div className="flex-1 min-w-0">
++                    <p className="text-sm text-stone-200 truncate">{m.user?.roblox_display_name || m.user?.roblox_username || 'Unknown'}</p>
++                    {m.rank && <p className="text-xs text-amber-500">{m.rank.name}</p>}
++                  </div>
++                  {perms.can_manage_members && (
++                    <button onClick={() => handleRemoveMember(m.id)} className="text-stone-500 hover:text-red-400 p-1">
++                      <UserMinus className="w-4 h-4" />
++                    </button>
++                  )}
++                </div>
++              ))}
++            </div>
++          )}
++        </div>
++      )}
++
++      {tab === 'activity' && (
++        <div className="ek-panel p-4">
++          {activity.length === 0 ? (
++            <p className="text-stone-500 text-sm text-center py-6">No recent activity for this division's members.</p>
++          ) : (
++            <div className="space-y-1">
++              {activity.map((a) => (
++                <div key={a.id} className="flex items-center gap-3 p-2 bg-stone-800/50 rounded-md">
++                  <Award className="w-4 h-4 text-amber-500 flex-shrink-0" />
++                  <div className="flex-1 min-w-0">
++                    <p className="text-sm text-stone-200 truncate">
++                      {a.user?.roblox_display_name || a.user?.roblox_username || 'Unknown'}
++                      <span className="text-stone-500"> &middot; {formatEvent(a)}</span>
++                    </p>
++                  </div>
++                  <span className="text-xs text-stone-500 flex-shrink-0">{new Date(a.created_at).toLocaleDateString()}</span>
++                </div>
++              ))}
++            </div>
++          )}
++        </div>
++      )}
++
++      {perms.can_manage_members && tab === 'members' && (
++        <button onClick={handleDeleteDivision} className="ek-btn ek-btn-danger w-full text-sm flex items-center justify-center gap-2">
++          <Trash2 className="w-4 h-4" /> Delete Division
++        </button>
++      )}
++
++      {showEdit && (
++        <EditDivisionModal
++          division={division}
++          onClose={() => setShowEdit(false)}
++          onSaved={() => { setShowEdit(false); if (id) loadAll(id); }}
++        />
++      )}
++    </div>
++  );
++}
++
++function formatEvent(a: EnrichedActivity): string {
++  if (a.event_type === 'points_awarded' && a.event_data) {
++    const points = a.event_data.points as number | undefined;
++    const reason = a.event_data.reason as string | undefined;
++    if (typeof points === 'number' && reason) {
++      return `${points >= 0 ? '+' : ''}${points} for ${reason}`;
++    }
++  }
++  return a.event_type.replace(/_/g, ' ');
++}
++
++function MemberChip({ member }: { member: EnrichedMember }) {
++  return (
++    <div className="flex items-center gap-2 p-2 bg-stone-800/50 rounded-md">
++      {member.user?.roblox_avatar_url ? (
++        <img src={member.user.roblox_avatar_url} alt="" className="w-7 h-7 rounded-full flex-shrink-0" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
++      ) : (
++        <div className="w-7 h-7 rounded-full bg-stone-700 flex items-center justify-center flex-shrink-0"><Users className="w-3.5 h-3.5 text-stone-400" /></div>
++      )}
++      <span className="text-sm text-stone-200 truncate">{member.user?.roblox_display_name || member.user?.roblox_username || 'Unknown'}</span>
++    </div>
++  );
++}
++
++function TabButton({
++  active, onClick, icon: Icon, label,
++}: { active: boolean; onClick: () => void; icon: typeof Shield; label: string }) {
++  return (
++    <button
++      onClick={onClick}
++      className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
++        active ? 'border-green-500 text-green-400' : 'border-transparent text-stone-500 hover:text-stone-300'
++      }`}
++    >
++      <Icon className="w-4 h-4" /> {label}
++    </button>
++  );
++}
++
++function EditDivisionModal({
++  division, onClose, onSaved,
++}: { division: Division; onClose: () => void; onSaved: () => void }) {
++  const [name, setName] = useState(division.name);
++  const [icon, setIcon] = useState(division.icon || '');
++  const [logoUrl, setLogoUrl] = useState(division.logo_url || '');
++  const [description, setDescription] = useState(division.description || '');
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  const handleSave = async () => {
++    if (!name.trim()) { setError('Division name is required.'); return; }
++    setSaving(true);
++    const { error: e } = await supabase
++      .from('divisions')
++      .update({
++        name: name.trim(),
++        icon: icon.trim() || null,
++        logo_url: logoUrl.trim() || null,
++        description: description.trim() || null,
++      })
++      .eq('id', division.id);
++    if (e) { setError(e.message); setSaving(false); return; }
++    setSaving(false);
++    onSaved();
++  };
++
++  return (
++    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
++      <div className="ek-panel max-w-md w-full p-6 animate-scale-in" onClick={(e) => e.stopPropagation()}>
++        <div className="flex items-center justify-between mb-4">
++          <h2 className="text-lg font-semibold text-amber-400">Edit Division</h2>
++          <button onClick={onClose} className="text-stone-400 hover:text-stone-200"><X className="w-5 h-5" /></button>
++        </div>
++        <div className="space-y-4">
++          <div>
++            <label className="ek-label">Division Name</label>
++            <input value={name} onChange={(e) => setName(e.target.value)} className="ek-input w-full" maxLength={50} />
++          </div>
++          <div>
++            <label className="ek-label">Icon (emoji or symbol, fallback)</label>
++            <input value={icon} onChange={(e) => setIcon(e.target.value)} className="ek-input w-full" maxLength={10} />
++          </div>
++          <div>
++            <label className="ek-label flex items-center gap-1.5">
++              <ImageIcon className="w-3.5 h-3.5" /> Logo Image URL (PNG)
++            </label>
++            <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} className="ek-input w-full" placeholder="https://example.com/logo.png" />
++            {logoUrl.trim() && (
++              <img
++                src={logoUrl.trim()}
++                alt="Logo preview"
++                className="w-14 h-14 rounded-md object-cover mt-2 border border-stone-700"
++                onError={(e) => { e.currentTarget.style.display = 'none'; }}
++              />
++            )}
++          </div>
++          <div>
++            <label className="ek-label">Description</label>
++            <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="ek-input w-full" rows={3} maxLength={200} />
++          </div>
++          {error && <p className="text-red-400 text-sm">{error}</p>}
++          <button onClick={handleSave} disabled={saving} className="ek-btn ek-btn-primary w-full flex items-center justify-center gap-2">
++            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
++            Save Changes
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/pages/DivisionRanks.tsx b/src/pages/DivisionRanks.tsx
+index b158163..c9c16b7 100644
+--- a/src/pages/DivisionRanks.tsx
++++ b/src/pages/DivisionRanks.tsx
+@@ -92,6 +92,7 @@ export function DivisionRanks() {
+                       {r.can_award_points && <Perm label="Award Points" />}
+                       {r.can_view_hr_panel && <Perm label="HR Panel" />}
+                       {r.can_manage_members && <Perm label="Manage Members" />}
++                      {r.can_edit_point_types && <Perm label="Edit Point Types" />}
+                     </div>
+                   </div>
+                   {perms.can_create_ranks && (
+@@ -174,6 +175,7 @@ function RankModal({
+     can_award_points: rank?.can_award_points || false,
+     can_view_hr_panel: rank?.can_view_hr_panel || false,
+     can_manage_members: rank?.can_manage_members || false,
++    can_edit_point_types: rank?.can_edit_point_types || false,
+   });
+   const [saving, setSaving] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+@@ -207,6 +209,7 @@ function RankModal({
+     { key: 'can_award_points', label: 'Can award points' },
+     { key: 'can_view_hr_panel', label: 'Can view HR panel' },
+     { key: 'can_manage_members', label: 'Can manage members' },
++    { key: 'can_edit_point_types', label: 'Can edit point event types' },
+   ];
+ 
+   return (
+diff --git a/src/pages/Divisions.tsx b/src/pages/Divisions.tsx
+index 04f1b0e..bab1c10 100644
+--- a/src/pages/Divisions.tsx
++++ b/src/pages/Divisions.tsx
+@@ -1,18 +1,19 @@
+ import { useEffect, useState } from 'react';
+-import { supabase, Division, DivisionRank, DivisionMember, DbUser } from '@/lib/supabase';
++import { useNavigate } from 'react-router-dom';
++import { supabase, Division } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
+ import { useAuth } from '@/context/AuthContext';
+ import {
+-  Swords, Plus, Users, X, Save, Loader2, Trash2, UserPlus, Shield,
++  Swords, Plus, Users, X, Save, Loader2, Image as ImageIcon,
+ } from 'lucide-react';
+ 
+ export function Divisions() {
+   const { user } = useAuth();
+   const perms = usePermissions();
++  const navigate = useNavigate();
+   const [divisions, setDivisions] = useState<(Division & { member_count: number })[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [showCreate, setShowCreate] = useState(false);
+-  const [selectedDivision, setSelectedDivision] = useState<Division | null>(null);
+ 
+   useEffect(() => {
+     loadDivisions();
+@@ -63,12 +64,21 @@ export function Divisions() {
+           {divisions.map((d) => (
+             <button
+               key={d.id}
+-              onClick={() => setSelectedDivision(d)}
++              onClick={() => navigate(`/divisions/${d.id}`)}
+               className="ek-panel p-5 text-left hover:border-green-700/50 transition-all group"
+             >
+               <div className="flex items-start justify-between mb-3">
+-                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl">
+-                  {d.icon || <Swords className="w-6 h-6 text-amber-400" />}
++                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-2xl overflow-hidden">
++                  {d.logo_url ? (
++                    <img
++                      src={d.logo_url}
++                      alt={d.name}
++                      className="w-full h-full object-cover"
++                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
++                    />
++                  ) : (
++                    d.icon || <Swords className="w-6 h-6 text-amber-400" />
++                  )}
+                 </div>
+                 <div className="flex items-center gap-1 text-stone-400">
+                   <Users className="w-4 h-4" />
+@@ -91,16 +101,6 @@ export function Divisions() {
+           onCreated={() => { setShowCreate(false); loadDivisions(); }}
+         />
+       )}
+-
+-      {selectedDivision && (
+-        <DivisionDetailModal
+-          division={selectedDivision}
+-          userId={user!.id}
+-          canManage={perms.can_manage_members}
+-          onClose={() => setSelectedDivision(null)}
+-          onChanged={loadDivisions}
+-        />
+-      )}
+     </div>
+   );
+ }
+@@ -110,6 +110,7 @@ function CreateDivisionModal({
+ }: { userId: string; onClose: () => void; onCreated: () => void }) {
+   const [name, setName] = useState('');
+   const [icon, setIcon] = useState('');
++  const [logoUrl, setLogoUrl] = useState('');
+   const [description, setDescription] = useState('');
+   const [saving, setSaving] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+@@ -120,6 +121,7 @@ function CreateDivisionModal({
+     const { error: insertError } = await supabase.from('divisions').insert({
+       name: name.trim(),
+       icon: icon.trim() || null,
++      logo_url: logoUrl.trim() || null,
+       description: description.trim() || null,
+       created_by: userId,
+     });
+@@ -141,9 +143,23 @@ function CreateDivisionModal({
+             <input value={name} onChange={(e) => setName(e.target.value)} className="ek-input w-full" placeholder="e.g., Earth Guard" maxLength={50} />
+           </div>
+           <div>
+-            <label className="ek-label">Icon (emoji or symbol)</label>
++            <label className="ek-label">Icon (emoji or symbol, used as fallback)</label>
+             <input value={icon} onChange={(e) => setIcon(e.target.value)} className="ek-input w-full" placeholder="e.g., ⚔️" maxLength={10} />
+           </div>
++          <div>
++            <label className="ek-label flex items-center gap-1.5">
++              <ImageIcon className="w-3.5 h-3.5" /> Logo Image URL (PNG, optional)
++            </label>
++            <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} className="ek-input w-full" placeholder="https://example.com/logo.png" />
++            {logoUrl.trim() && (
++              <img
++                src={logoUrl.trim()}
++                alt="Logo preview"
++                className="w-14 h-14 rounded-md object-cover mt-2 border border-stone-700"
++                onError={(e) => { e.currentTarget.style.display = 'none'; }}
++              />
++            )}
++          </div>
+           <div>
+             <label className="ek-label">Description</label>
+             <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="ek-input w-full" rows={3} maxLength={200} />
+@@ -158,206 +174,3 @@ function CreateDivisionModal({
+     </div>
+   );
+ }
+-
+-function DivisionDetailModal({
+-  division, userId, canManage, onClose, onChanged,
+-}: {
+-  division: Division;
+-  userId: string;
+-  canManage: boolean;
+-  onClose: () => void;
+-  onChanged: () => void;
+-}) {
+-  const [ranks, setRanks] = useState<DivisionRank[]>([]);
+-  const [members, setMembers] = useState<(DivisionMember & { username: string; display_name: string | null; avatar: string | null })[]>([]);
+-  const [allUsers, setAllUsers] = useState<DbUser[]>([]);
+-  const [showAddMember, setShowAddMember] = useState(false);
+-  const [selectedUserId, setSelectedUserId] = useState('');
+-  const [selectedRankId, setSelectedRankId] = useState('');
+-
+-  useEffect(() => {
+-    (async () => {
+-      const { data: r } = await supabase
+-        .from('division_ranks')
+-        .select('*')
+-        .eq('division_id', division.id)
+-        .order('hierarchy', { ascending: false });
+-      setRanks(r || []);
+-
+-      const { data: dm } = await supabase
+-        .from('division_members')
+-        .select('*')
+-        .eq('division_id', division.id);
+-      const memberUserIds = (dm || []).map((m) => m.user_id);
+-      let userMap = new Map<string, DbUser>();
+-      if (memberUserIds.length > 0) {
+-        const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
+-        (mu || []).forEach((u) => userMap.set(u.id, u));
+-      }
+-      const enriched = (dm || []).map((m) => {
+-        const u = userMap.get(m.user_id);
+-        return {
+-          ...m,
+-          username: u?.roblox_username || 'Unknown',
+-          display_name: u?.roblox_display_name || null,
+-          avatar: u?.roblox_avatar_url || null,
+-        };
+-      });
+-      setMembers(enriched);
+-
+-      const { data: au } = await supabase.from('users').select('*').order('roblox_username');
+-      setAllUsers(au || []);
+-    })();
+-  }, [division.id]);
+-
+-  const handleAddMember = async () => {
+-    if (!selectedUserId) return;
+-    const { error } = await supabase.from('division_members').insert({
+-      user_id: selectedUserId,
+-      division_id: division.id,
+-      division_rank_id: selectedRankId || null,
+-    });
+-    if (!error) {
+-      setShowAddMember(false);
+-      setSelectedUserId('');
+-      setSelectedRankId('');
+-      // Reload modal data
+-      const { data: dm } = await supabase.from('division_members').select('*').eq('division_id', division.id);
+-      const memberUserIds = (dm || []).map((m) => m.user_id);
+-      let userMap = new Map<string, DbUser>();
+-      if (memberUserIds.length > 0) {
+-        const { data: mu } = await supabase.from('users').select('*').in('id', memberUserIds);
+-        (mu || []).forEach((u) => userMap.set(u.id, u));
+-      }
+-      setMembers((dm || []).map((m) => {
+-        const u = userMap.get(m.user_id);
+-        return { ...m, username: u?.roblox_username || 'Unknown', display_name: u?.roblox_display_name || null, avatar: u?.roblox_avatar_url || null };
+-      }));
+-      onChanged();
+-    }
+-  };
+-
+-  const handleRemoveMember = async (memberId: string) => {
+-    await supabase.from('division_members').delete().eq('id', memberId);
+-    setMembers(members.filter((m) => m.id !== memberId));
+-    onChanged();
+-  };
+-
+-  const handleDeleteDivision = async () => {
+-    if (!confirm(`Delete division "${division.name}"? This will remove all members and ranks.`)) return;
+-    await supabase.from('divisions').delete().eq('id', division.id);
+-    onClose();
+-    onChanged();
+-  };
+-
+-  return (
+-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+-      <div className="ek-panel max-w-2xl w-full p-6 animate-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+-        <div className="flex items-center justify-between mb-4">
+-          <div className="flex items-center gap-3">
+-            <div className="w-10 h-10 rounded-md bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center text-xl">
+-              {division.icon || <Swords className="w-5 h-5 text-amber-400" />}
+-            </div>
+-            <div>
+-              <h2 className="text-lg font-semibold text-amber-400">{division.name}</h2>
+-              {division.description && <p className="text-sm text-stone-500">{division.description}</p>}
+-            </div>
+-          </div>
+-          <button onClick={onClose} className="text-stone-400 hover:text-stone-200"><X className="w-5 h-5" /></button>
+-        </div>
+-
+-        {/* Ranks */}
+-        <div className="mb-6">
+-          <h3 className="text-sm font-semibold text-stone-300 mb-2 flex items-center gap-2">
+-            <Shield className="w-4 h-4 text-green-500" /> Ranks ({ranks.length})
+-          </h3>
+-          {ranks.length === 0 ? (
+-            <p className="text-stone-500 text-sm">No ranks defined yet.</p>
+-          ) : (
+-            <div className="space-y-1">
+-              {ranks.map((r) => (
+-                <div key={r.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
+-                  <div>
+-                    <span className="text-sm text-stone-200">{r.name}</span>
+-                    <span className="text-xs text-stone-500 ml-2">Hierarchy: {r.hierarchy}</span>
+-                  </div>
+-                  <div className="flex gap-1">
+-                    {r.can_promote && <span className="ek-badge bg-green-900/40 text-green-400 text-[10px]">Promote</span>}
+-                    {r.can_award_points && <span className="ek-badge bg-amber-900/40 text-amber-400 text-[10px]">Points</span>}
+-                    {r.can_manage_members && <span className="ek-badge bg-blue-900/40 text-blue-400 text-[10px]">Manage</span>}
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-        </div>
+-
+-        {/* Members */}
+-        <div className="mb-4">
+-          <div className="flex items-center justify-between mb-2">
+-            <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2">
+-              <Users className="w-4 h-4 text-green-500" /> Members ({members.length})
+-            </h3>
+-            {canManage && (
+-              <button onClick={() => setShowAddMember(!showAddMember)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-1 py-1.5 px-3">
+-                <UserPlus className="w-3.5 h-3.5" /> Add Member
+-              </button>
+-            )}
+-          </div>
+-
+-          {showAddMember && (
+-            <div className="ek-panel-light p-3 mb-3 space-y-2">
+-              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="ek-input w-full">
+-                <option value="">Select user...</option>
+-                {allUsers
+-                  .filter((u) => !members.some((m) => m.user_id === u.id))
+-                  .map((u) => (
+-                    <option key={u.id} value={u.id}>{u.roblox_display_name || u.roblox_username}</option>
+-                  ))}
+-              </select>
+-              <select value={selectedRankId} onChange={(e) => setSelectedRankId(e.target.value)} className="ek-input w-full">
+-                <option value="">No rank (unranked)</option>
+-                {ranks.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+-              </select>
+-              <button onClick={handleAddMember} className="ek-btn ek-btn-primary w-full text-sm">Add</button>
+-            </div>
+-          )}
+-
+-          {members.length === 0 ? (
+-            <p className="text-stone-500 text-sm">No members in this division.</p>
+-          ) : (
+-            <div className="space-y-1">
+-              {members.map((m) => {
+-                const rank = ranks.find((r) => r.id === m.division_rank_id);
+-                return (
+-                  <div key={m.id} className="flex items-center gap-3 p-2 bg-stone-800/50 rounded-md">
+-                    {m.avatar ? (
+-                      <img src={m.avatar} alt={m.display_name || m.username} className="w-8 h-8 rounded-full" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+-                    ) : (
+-                      <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-4 h-4 text-stone-400" /></div>
+-                    )}
+-                    <div className="flex-1 min-w-0">
+-                      <p className="text-sm text-stone-200 truncate">{m.display_name || m.username}</p>
+-                      {rank && <p className="text-xs text-amber-500">{rank.name}</p>}
+-                    </div>
+-                    {canManage && (
+-                      <button onClick={() => handleRemoveMember(m.id)} className="text-stone-500 hover:text-red-400">
+-                        <Trash2 className="w-4 h-4" />
+-                      </button>
+-                    )}
+-                  </div>
+-                );
+-              })}
+-            </div>
+-          )}
+-        </div>
+-
+-        {canManage && (
+-          <button onClick={handleDeleteDivision} className="ek-btn ek-btn-danger w-full text-sm flex items-center justify-center gap-2">
+-            <Trash2 className="w-4 h-4" /> Delete Division
+-          </button>
+-        )}
+-      </div>
+-    </div>
+-  );
+-}
+diff --git a/src/pages/Members.tsx b/src/pages/Members.tsx
+index 1e41f5b..5924931 100644
+--- a/src/pages/Members.tsx
++++ b/src/pages/Members.tsx
+@@ -1,6 +1,12 @@
+-import { useEffect, useState } from 'react';
+-import { supabase, DbUser, Division, DivisionRank } from '@/lib/supabase';
+-import { Search, Users, Shield, Award, Clock, Compass, X, ChevronRight } from 'lucide-react';
++import { useEffect, useMemo, useState } from 'react';
++import {
++  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
++} from '@/lib/supabase';
++import { usePermissions } from '@/lib/permissions';
++import {
++  Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
++  Save, Loader2, Check, UserMinus,
++} from 'lucide-react';
+ 
+ interface MemberWithDetails extends DbUser {
+   division_name: string | null;
+@@ -8,13 +14,33 @@ interface MemberWithDetails extends DbUser {
+   military_points: number;
+ }
+ 
++interface DivisionMembership {
++  membershipId: string;
++  divisionId: string;
++  divisionRankId: string | null;
++}
++
++const EMPTY_FILTERS = {
++  sub: '',
++  timezone: '',
++  divisionId: '',
++  robloxRank: '',
++  divisionRankId: '',
++  path: '',
++};
++
+ export function Members() {
++  const perms = usePermissions();
+   const [members, setMembers] = useState<MemberWithDetails[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [search, setSearch] = useState('');
+   const [selectedMember, setSelectedMember] = useState<MemberWithDetails | null>(null);
+   const [divisions, setDivisions] = useState<Map<string, Division>>(new Map());
+   const [ranks, setRanks] = useState<Map<string, DivisionRank>>(new Map());
++  const [memberDivisionRankId, setMemberDivisionRankId] = useState<Map<string, string>>(new Map());
++  const [membershipByUser, setMembershipByUser] = useState<Map<string, DivisionMembership>>(new Map());
++  const [showFilters, setShowFilters] = useState(false);
++  const [filters, setFilters] = useState(EMPTY_FILTERS);
+ 
+   useEffect(() => {
+     loadMembers();
+@@ -55,38 +81,126 @@ export function Members() {
+       });
+     }
+ 
++    setMemberDivisionRankId(new Map(allMembers?.map((m) => [m.user_id, m.division_rank_id || '']) || []));
++    setMembershipByUser(new Map((allMembers || []).map((m) => [m.user_id, {
++      membershipId: m.id,
++      divisionId: m.division_id,
++      divisionRankId: m.division_rank_id,
++    }])));
+     setMembers(enriched);
+     setLoading(false);
+   };
+ 
+-  const filtered = members.filter((m) => {
++  const activeFilterCount = Object.values(filters).filter(Boolean).length;
++
++  const filtered = useMemo(() => members.filter((m) => {
+     const q = search.toLowerCase();
+-    return (
++    const matchesSearch = (
+       m.roblox_username.toLowerCase().includes(q) ||
+       (m.roblox_display_name || '').toLowerCase().includes(q) ||
+       m.group_rank_name.toLowerCase().includes(q) ||
+       (m.division_name || '').toLowerCase().includes(q)
+     );
+-  });
++    if (!matchesSearch) return false;
++
++    if (filters.sub && m.main_sub !== filters.sub) return false;
++    if (filters.timezone && m.timezone !== filters.timezone) return false;
++    if (filters.path && m.selected_path !== filters.path) return false;
++    if (filters.robloxRank && String(m.group_rank) !== filters.robloxRank) return false;
++    if (filters.divisionId) {
++      const memberDivName = m.division_name;
++      const filterDivName = divisions.get(filters.divisionId)?.name;
++      if (!memberDivName || memberDivName !== filterDivName) return false;
++    }
++    if (filters.divisionRankId && memberDivisionRankId.get(m.id) !== filters.divisionRankId) return false;
++
++    return true;
++  }), [members, search, filters, divisions, memberDivisionRankId]);
++
++  const divisionRankOptions = Array.from(ranks.values()).sort((a, b) => a.name.localeCompare(b.name));
++  const divisionOptions = Array.from(divisions.values()).sort((a, b) => a.name.localeCompare(b.name));
+ 
+   return (
+     <div className="space-y-4">
+-      <div className="flex items-center justify-between">
++      <div className="flex items-center justify-between flex-wrap gap-3">
+         <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
+           Military Profiles
+         </h1>
+-        <div className="relative">
+-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500" />
+-          <input
+-            type="text"
+-            value={search}
+-            onChange={(e) => setSearch(e.target.value)}
+-            placeholder="Search members..."
+-            className="ek-input pl-9 w-64"
+-          />
++        <div className="flex items-center gap-2">
++          <div className="relative">
++            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500" />
++            <input
++              type="text"
++              value={search}
++              onChange={(e) => setSearch(e.target.value)}
++              placeholder="Search members..."
++              className="ek-input pl-9 w-64"
++            />
++          </div>
++          <button
++            onClick={() => setShowFilters(!showFilters)}
++            className={`ek-btn text-sm flex items-center gap-2 ${showFilters || activeFilterCount > 0 ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
++          >
++            <Filter className="w-4 h-4" /> Filters
++            {activeFilterCount > 0 && (
++              <span className="ek-badge bg-stone-900/60 text-xs">{activeFilterCount}</span>
++            )}
++          </button>
+         </div>
+       </div>
+ 
++      {showFilters && (
++        <div className="ek-panel p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
++          <div>
++            <label className="ek-label">Sub</label>
++            <select value={filters.sub} onChange={(e) => setFilters({ ...filters, sub: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {SUBS.map((s) => <option key={s} value={s}>{s}</option>)}
++            </select>
++          </div>
++          <div>
++            <label className="ek-label">Timezone</label>
++            <select value={filters.timezone} onChange={(e) => setFilters({ ...filters, timezone: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {TIMEZONES.map((t) => <option key={t} value={t}>{t}</option>)}
++            </select>
++          </div>
++          <div>
++            <label className="ek-label">Division</label>
++            <select value={filters.divisionId} onChange={(e) => setFilters({ ...filters, divisionId: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {divisionOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
++            </select>
++          </div>
++          <div>
++            <label className="ek-label">Roblox Rank</label>
++            <select value={filters.robloxRank} onChange={(e) => setFilters({ ...filters, robloxRank: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {ROBLOX_RANKS.map((r) => <option key={r.rank} value={String(r.rank)}>{r.name}</option>)}
++            </select>
++          </div>
++          <div>
++            <label className="ek-label">Division Rank</label>
++            <select value={filters.divisionRankId} onChange={(e) => setFilters({ ...filters, divisionRankId: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {divisionRankOptions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
++            </select>
++          </div>
++          <div>
++            <label className="ek-label">Selected Path</label>
++            <select value={filters.path} onChange={(e) => setFilters({ ...filters, path: e.target.value })} className="ek-input w-full">
++              <option value="">All</option>
++              {PATHS.map((p) => <option key={p} value={p}>{p}</option>)}
++            </select>
++          </div>
++          <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
++            <button onClick={() => setFilters(EMPTY_FILTERS)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-2">
++              <RotateCcw className="w-3.5 h-3.5" /> Clear Filters
++            </button>
++          </div>
++        </div>
++      )}
++
+       {loading ? (
+         <div className="text-center py-12 text-stone-500">Loading members...</div>
+       ) : filtered.length === 0 ? (
+@@ -145,14 +259,74 @@ export function Members() {
+       {selectedMember && (
+         <MemberModal
+           member={selectedMember}
++          canManage={perms.can_manage_members}
++          divisions={divisionOptions}
++          allRanks={Array.from(ranks.values())}
++          membership={membershipByUser.get(selectedMember.id) || null}
+           onClose={() => setSelectedMember(null)}
++          onChanged={loadMembers}
+         />
+       )}
+     </div>
+   );
+ }
+ 
+-function MemberModal({ member, onClose }: { member: MemberWithDetails; onClose: () => void }) {
++function MemberModal({
++  member, canManage, divisions, allRanks, membership, onClose, onChanged,
++}: {
++  member: MemberWithDetails;
++  canManage: boolean;
++  divisions: Division[];
++  allRanks: DivisionRank[];
++  membership: DivisionMembership | null;
++  onClose: () => void;
++  onChanged: () => void;
++}) {
++  const [divisionId, setDivisionId] = useState(membership?.divisionId || '');
++  const [divisionRankId, setDivisionRankId] = useState(membership?.divisionRankId || '');
++  const [saving, setSaving] = useState(false);
++  const [saved, setSaved] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  const ranksForDivision = allRanks.filter((r) => r.division_id === divisionId);
++
++  const handleAssign = async () => {
++    if (!divisionId) { setError('Select a division first.'); return; }
++    setSaving(true);
++    setError(null);
++
++    if (membership) {
++      const { error: e } = await supabase
++        .from('division_members')
++        .update({ division_id: divisionId, division_rank_id: divisionRankId || null })
++        .eq('id', membership.membershipId);
++      if (e) { setError(e.message); setSaving(false); return; }
++    } else {
++      const { error: e } = await supabase.from('division_members').insert({
++        user_id: member.id,
++        division_id: divisionId,
++        division_rank_id: divisionRankId || null,
++      });
++      if (e) { setError(e.message); setSaving(false); return; }
++    }
++
++    setSaving(false);
++    setSaved(true);
++    onChanged();
++    setTimeout(() => setSaved(false), 1500);
++  };
++
++  const handleRemoveFromDivision = async () => {
++    if (!membership) return;
++    if (!confirm('Remove this member from their division?')) return;
++    setSaving(true);
++    await supabase.from('division_members').delete().eq('id', membership.membershipId);
++    setDivisionId('');
++    setDivisionRankId('');
++    setSaving(false);
++    onChanged();
++  };
++
+   return (
+     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+       <div
+@@ -198,6 +372,43 @@ function MemberModal({ member, onClose }: { member: MemberWithDetails; onClose:
+           <Row icon={Shield} label="Main Sub" value={member.main_sub || 'Not set'} />
+           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
+         </div>
++
++        {canManage && (
++          <div className="mt-5 pt-5 border-t border-stone-700">
++            <h4 className="ek-label mb-2">Assign to Division</h4>
++            <div className="grid sm:grid-cols-2 gap-3">
++              <select
++                value={divisionId}
++                onChange={(e) => { setDivisionId(e.target.value); setDivisionRankId(''); }}
++                className="ek-input w-full"
++              >
++                <option value="">Select division...</option>
++                {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
++              </select>
++              <select
++                value={divisionRankId}
++                onChange={(e) => setDivisionRankId(e.target.value)}
++                className="ek-input w-full"
++                disabled={!divisionId}
++              >
++                <option value="">No rank (unranked)</option>
++                {ranksForDivision.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
++              </select>
++            </div>
++            {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
++            <div className="flex items-center gap-2 mt-3">
++              <button onClick={handleAssign} disabled={saving} className="ek-btn ek-btn-primary flex-1 flex items-center justify-center gap-2 text-sm">
++                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
++                {saved ? 'Saved!' : membership ? 'Update Assignment' : 'Assign'}
++              </button>
++              {membership && (
++                <button onClick={handleRemoveFromDivision} disabled={saving} className="ek-btn ek-btn-danger flex items-center gap-2 text-sm">
++                  <UserMinus className="w-4 h-4" /> Remove
++                </button>
++              )}
++            </div>
++          </div>
++        )}
+       </div>
+     </div>
+   );
+diff --git a/src/pages/Points.tsx b/src/pages/Points.tsx
+index 20b4d46..d7f5765 100644
+--- a/src/pages/Points.tsx
++++ b/src/pages/Points.tsx
+@@ -1,9 +1,9 @@
+ import { useEffect, useState } from 'react';
+-import { supabase, DbUser, POINT_REASONS, Division } from '@/lib/supabase';
++import { supabase, DbUser, PointEventType } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
+ import { useAuth } from '@/context/AuthContext';
+ import {
+-  Award, Search, X, Loader2, Check, Users, Plus, Trash2, Send,
++  Award, Search, X, Loader2, Check, Users, Plus, Trash2, Send, Settings, Save, ArrowLeft,
+ } from 'lucide-react';
+ 
+ interface MassPointEntry {
+@@ -16,14 +16,21 @@ export function Points() {
+   const perms = usePermissions();
+   const { user } = useAuth();
+   const [allUsers, setAllUsers] = useState<DbUser[]>([]);
++  const [eventTypes, setEventTypes] = useState<PointEventType[]>([]);
+   const [search, setSearch] = useState('');
+-  const [selectedReason, setSelectedReason] = useState<typeof POINT_REASONS[number] | null>(null);
++  const [selectedReason, setSelectedReason] = useState<PointEventType | null>(null);
+   const [customReason, setCustomReason] = useState('');
+   const [customPoints, setCustomPoints] = useState(0);
+   const [selectedUsers, setSelectedUsers] = useState<MassPointEntry[]>([]);
+   const [awarding, setAwarding] = useState(false);
+   const [success, setSuccess] = useState(false);
+   const [recentAwards, setRecentAwards] = useState<{ user_id: string; points: number; reason: string; created_at: string }[]>([]);
++  const [showManageTypes, setShowManageTypes] = useState(false);
++
++  const loadEventTypes = async () => {
++    const { data } = await supabase.from('point_event_types').select('*').order('sort_order');
++    setEventTypes(data || []);
++  };
+ 
+   useEffect(() => {
+     (async () => {
+@@ -40,6 +47,8 @@ export function Points() {
+         .order('created_at', { ascending: false })
+         .limit(10);
+       setRecentAwards(recent || []);
++
++      await loadEventTypes();
+     })();
+   }, []);
+ 
+@@ -52,6 +61,17 @@ export function Points() {
+     );
+   }
+ 
++  if (showManageTypes) {
++    return (
++      <ManagePointTypes
++        eventTypes={eventTypes}
++        userId={user!.id}
++        onBack={() => setShowManageTypes(false)}
++        onChanged={loadEventTypes}
++      />
++    );
++  }
++
+   const filteredUsers = allUsers.filter((u) => {
+     const q = search.toLowerCase();
+     return u.roblox_username.toLowerCase().includes(q) || (u.roblox_display_name || '').toLowerCase().includes(q);
+@@ -111,31 +131,42 @@ export function Points() {
+ 
+   return (
+     <div className="space-y-6">
+-      <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
+-        Military Points
+-      </h1>
++      <div className="flex items-center justify-between">
++        <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
++          Military Points
++        </h1>
++        {perms.can_edit_point_types && (
++          <button onClick={() => setShowManageTypes(true)} className="ek-btn ek-btn-ghost text-sm flex items-center gap-2">
++            <Settings className="w-4 h-4" /> Manage Event Types
++          </button>
++        )}
++      </div>
+ 
+       {/* Point reason selection */}
+       <div className="ek-panel p-5">
+         <h2 className="ek-section-title">1. Select Event Type</h2>
+-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+-          {POINT_REASONS.map((r) => (
+-            <button
+-              key={r.label}
+-              onClick={() => { setSelectedReason(r); setCustomReason(''); setCustomPoints(0); }}
+-              className={`p-3 rounded-md text-left border transition-all ${
+-                selectedReason?.label === r.label
+-                  ? 'bg-green-800/30 border-green-500 text-green-300'
+-                  : 'bg-stone-800/50 border-stone-700 text-stone-400 hover:border-stone-600'
+-              }`}
+-            >
+-              <p className="text-sm font-medium">{r.reason}</p>
+-              <p className={`text-lg font-bold mt-1 ${r.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+-                {r.points >= 0 ? '+' : ''}{r.points}
+-              </p>
+-            </button>
+-          ))}
+-        </div>
++        {eventTypes.length === 0 ? (
++          <p className="text-stone-500 text-sm">No event types configured yet. Use a custom event below.</p>
++        ) : (
++          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
++            {eventTypes.map((r) => (
++              <button
++                key={r.id}
++                onClick={() => { setSelectedReason(r); setCustomReason(''); setCustomPoints(0); }}
++                className={`p-3 rounded-md text-left border transition-all ${
++                  selectedReason?.id === r.id
++                    ? 'bg-green-800/30 border-green-500 text-green-300'
++                    : 'bg-stone-800/50 border-stone-700 text-stone-400 hover:border-stone-600'
++                }`}
++              >
++                <p className="text-sm font-medium">{r.reason}</p>
++                <p className={`text-lg font-bold mt-1 ${r.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
++                  {r.points >= 0 ? '+' : ''}{r.points}
++                </p>
++              </button>
++            ))}
++          </div>
++        )}
+ 
+         {/* Custom reason */}
+         <div className="mt-4 pt-4 border-t border-stone-700">
+@@ -267,3 +298,166 @@ export function Points() {
+     </div>
+   );
+ }
++
++function ManagePointTypes({
++  eventTypes, userId, onBack, onChanged,
++}: {
++  eventTypes: PointEventType[];
++  userId: string;
++  onBack: () => void;
++  onChanged: () => void;
++}) {
++  const [showForm, setShowForm] = useState(false);
++  const [editing, setEditing] = useState<PointEventType | null>(null);
++
++  const handleDelete = async (id: string) => {
++    if (!confirm('Delete this point event type?')) return;
++    await supabase.from('point_event_types').delete().eq('id', id);
++    onChanged();
++  };
++
++  return (
++    <div className="space-y-4">
++      <div className="flex items-center gap-3">
++        <button onClick={onBack} className="text-stone-400 hover:text-stone-200">
++          <ArrowLeft className="w-5 h-5" />
++        </button>
++        <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
++          Manage Point Event Types
++        </h1>
++      </div>
++
++      <div className="flex justify-end">
++        <button onClick={() => { setEditing(null); setShowForm(true); }} className="ek-btn ek-btn-gold flex items-center gap-2 text-sm">
++          <Plus className="w-4 h-4" /> Add Event Type
++        </button>
++      </div>
++
++      {eventTypes.length === 0 ? (
++        <div className="ek-panel p-12 text-center">
++          <Award className="w-12 h-12 text-stone-600 mx-auto mb-3" />
++          <p className="text-stone-400">No event types yet.</p>
++        </div>
++      ) : (
++        <div className="space-y-2">
++          {eventTypes.map((r) => (
++            <div key={r.id} className="ek-panel p-4 flex items-center gap-4">
++              <div className="flex-1">
++                <p className="text-sm font-semibold text-stone-100">{r.reason}</p>
++                <p className="text-xs text-stone-500">{r.event_type}</p>
++              </div>
++              <span className={`text-lg font-bold ${r.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
++                {r.points >= 0 ? '+' : ''}{r.points}
++              </span>
++              <div className="flex gap-1">
++                <button onClick={() => { setEditing(r); setShowForm(true); }} className="text-stone-400 hover:text-amber-400 p-1">
++                  <Settings className="w-4 h-4" />
++                </button>
++                <button onClick={() => handleDelete(r.id)} className="text-stone-400 hover:text-red-400 p-1">
++                  <Trash2 className="w-4 h-4" />
++                </button>
++              </div>
++            </div>
++          ))}
++        </div>
++      )}
++
++      {showForm && (
++        <PointTypeModal
++          eventType={editing}
++          userId={userId}
++          nextSortOrder={eventTypes.length}
++          onClose={() => setShowForm(false)}
++          onSaved={() => { setShowForm(false); onChanged(); }}
++        />
++      )}
++    </div>
++  );
++}
++
++function PointTypeModal({
++  eventType, userId, nextSortOrder, onClose, onSaved,
++}: {
++  eventType: PointEventType | null;
++  userId: string;
++  nextSortOrder: number;
++  onClose: () => void;
++  onSaved: () => void;
++}) {
++  const [reason, setReason] = useState(eventType?.reason || '');
++  const [points, setPoints] = useState(eventType?.points ?? 0);
++  const [eventTypeKey, setEventTypeKey] = useState(eventType?.event_type || '');
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  const handleSave = async () => {
++    if (!reason.trim()) { setError('Reason is required.'); return; }
++    if (!eventTypeKey.trim()) { setError('Event type key is required.'); return; }
++    if (points === 0) { setError('Points cannot be 0.'); return; }
++
++    setSaving(true);
++    const label = `${reason.trim()} (${points >= 0 ? '+' : ''}${points})`;
++
++    if (eventType) {
++      const { error: e } = await supabase
++        .from('point_event_types')
++        .update({
++          reason: reason.trim(),
++          points,
++          event_type: eventTypeKey.trim(),
++          label,
++          updated_at: new Date().toISOString(),
++        })
++        .eq('id', eventType.id);
++      if (e) { setError(e.message); setSaving(false); return; }
++    } else {
++      const { error: e } = await supabase.from('point_event_types').insert({
++        reason: reason.trim(),
++        points,
++        event_type: eventTypeKey.trim(),
++        label,
++        sort_order: nextSortOrder,
++        created_by: userId,
++      });
++      if (e) { setError(e.message); setSaving(false); return; }
++    }
++    setSaving(false);
++    onSaved();
++  };
++
++  return (
++    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
++      <div className="ek-panel max-w-md w-full p-6 animate-scale-in" onClick={(e) => e.stopPropagation()}>
++        <div className="flex items-center justify-between mb-4">
++          <h2 className="text-lg font-semibold text-amber-400">{eventType ? 'Edit Event Type' : 'Add Event Type'}</h2>
++          <button onClick={onClose} className="text-stone-400 hover:text-stone-200"><X className="w-5 h-5" /></button>
++        </div>
++        <div className="space-y-4">
++          <div>
++            <label className="ek-label">Reason (shown to users)</label>
++            <input value={reason} onChange={(e) => setReason(e.target.value)} className="ek-input w-full" placeholder="e.g., Attended a training" maxLength={100} />
++          </div>
++          <div>
++            <label className="ek-label">Points (negative for deductions)</label>
++            <input type="number" value={points} onChange={(e) => setPoints(parseInt(e.target.value) || 0)} className="ek-input w-full" />
++          </div>
++          <div>
++            <label className="ek-label">Event Type Key (unique, no spaces)</label>
++            <input
++              value={eventTypeKey}
++              onChange={(e) => setEventTypeKey(e.target.value.replace(/\s+/g, '_').toLowerCase())}
++              className="ek-input w-full"
++              placeholder="e.g., training_attend"
++              maxLength={50}
++            />
++          </div>
++          {error && <p className="text-red-400 text-sm">{error}</p>}
++          <button onClick={handleSave} disabled={saving} className="ek-btn ek-btn-primary w-full flex items-center justify-center gap-2">
++            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
++            {eventType ? 'Update' : 'Create'}
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/supabase/migrations/20260918120000_003_divisions_and_point_types.sql b/supabase/migrations/20260918120000_003_divisions_and_point_types.sql
+new file mode 100644
+index 0000000..0a5ec76
+--- /dev/null
++++ b/supabase/migrations/20260918120000_003_divisions_and_point_types.sql
+@@ -0,0 +1,74 @@
++/*
++# Divisions Enhancements + Configurable Point Event Types
++
++## Changes
++1. `divisions.logo_url` - optional URL to a custom PNG/image logo for a division.
++2. `can_edit_point_types` permission added to `division_ranks` and `user_permissions`,
++   controlling who may add/edit/remove default military point event types.
++3. New `point_event_types` table - replaces the hardcoded list of point award reasons
++   with a database-backed, editable list (label, points, event_type key, reason text).
++   Seeded with the existing default reasons so behavior is unchanged until edited.
++
++## Security
++- RLS enabled on `point_event_types`, following the same anon/authenticated pattern
++  as other tables in this app (app-layer permission checks control writes).
++*/
++
++-- =============================================================
++-- DIVISIONS: custom logo URL
++-- =============================================================
++ALTER TABLE divisions ADD COLUMN IF NOT EXISTS logo_url text;
++
++-- =============================================================
++-- PERMISSION: can_edit_point_types
++-- =============================================================
++ALTER TABLE division_ranks ADD COLUMN IF NOT EXISTS can_edit_point_types boolean NOT NULL DEFAULT false;
++ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS can_edit_point_types boolean NOT NULL DEFAULT false;
++
++-- =============================================================
++-- POINT EVENT TYPES TABLE
++-- =============================================================
++CREATE TABLE IF NOT EXISTS point_event_types (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  label text NOT NULL,
++  reason text NOT NULL,
++  points integer NOT NULL,
++  event_type text NOT NULL UNIQUE,
++  sort_order integer NOT NULL DEFAULT 0,
++  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
++  created_at timestamptz DEFAULT now(),
++  updated_at timestamptz DEFAULT now()
++);
++
++ALTER TABLE point_event_types ENABLE ROW LEVEL SECURITY;
++
++DROP POLICY IF EXISTS "point_event_types_select_all" ON point_event_types;
++CREATE POLICY "point_event_types_select_all"
++ON point_event_types FOR SELECT TO anon, authenticated USING (true);
++
++DROP POLICY IF EXISTS "point_event_types_insert_auth" ON point_event_types;
++CREATE POLICY "point_event_types_insert_auth"
++ON point_event_types FOR INSERT TO anon, authenticated WITH CHECK (true);
++
++DROP POLICY IF EXISTS "point_event_types_update_auth" ON point_event_types;
++CREATE POLICY "point_event_types_update_auth"
++ON point_event_types FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
++
++DROP POLICY IF EXISTS "point_event_types_delete_auth" ON point_event_types;
++CREATE POLICY "point_event_types_delete_auth"
++ON point_event_types FOR DELETE TO anon, authenticated USING (true);
++
++-- Seed with the existing hardcoded defaults (idempotent on event_type)
++INSERT INTO point_event_types (label, reason, points, event_type, sort_order) VALUES
++  ('Recruiting someone to Private (+10)', 'Recruited someone to Private', 10, 'recruiting', 1),
++  ('Attending an official raid (+4)', 'Attended an official raid', 4, 'official_raid', 2),
++  ('Cohosting (+3)', 'Cohosted an event', 3, 'cohosting', 3),
++  ('Responding to a reinforcement call (+1)', 'Responded to a reinforcement call', 1, 'reinforcement', 4),
++  ('Successful guarding (+2)', 'Successful guarding', 2, 'guarding_success', 5),
++  ('Disruptive guarding (-4)', 'Disruptive guarding', -4, 'guarding_disruptive', 6),
++  ('Attending a training (+1)', 'Attended a training', 1, 'training_attend', 7),
++  ('Winning an event (+1)', 'Won an event', 1, 'event_win', 8),
++  ('Disruptive at training (-4)', 'Disruptive at training', -4, 'training_disruptive', 9)
++ON CONFLICT (event_type) DO NOTHING;
++
++CREATE INDEX IF NOT EXISTS idx_point_event_types_sort ON point_event_types(sort_order);
+-- 
+2.43.0
+
