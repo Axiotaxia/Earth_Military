@@ -4,6 +4,7 @@ import {
   supabase, Division, DivisionRank, DivisionMember, DbUser, ActivityLog,
 } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
+import { useAuth } from '@/context/AuthContext';
 import {
   Swords, Users, Shield, ArrowLeft, Settings, Trash2, Save, Loader2, X,
   Image as ImageIcon, Activity, Award, UserMinus,
@@ -22,6 +23,7 @@ export function DivisionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const perms = usePermissions();
+  const { user } = useAuth();
 
   const [division, setDivision] = useState<Division | null>(null);
   const [ranks, setRanks] = useState<DivisionRank[]>([]);
@@ -83,9 +85,17 @@ export function DivisionDetail() {
     setLoading(false);
   };
 
-  const handleRemoveMember = async (memberId: string) => {
+  const canManageMember = (m: EnrichedMember): boolean => {
+    if (!perms.can_manage_members) return false;
+    if (perms.is_owner) return true;
+    if (!user || !m.user) return false;
+    return m.user.group_rank < user.group_rank;
+  };
+
+  const handleRemoveMember = async (member: EnrichedMember) => {
+    if (!canManageMember(member)) return;
     if (!confirm('Remove this member from the division?')) return;
-    await supabase.from('division_members').delete().eq('id', memberId);
+    await supabase.from('division_members').delete().eq('id', member.id);
     if (id) loadAll(id);
   };
 
@@ -237,8 +247,8 @@ export function DivisionDetail() {
                     <p className="text-sm text-stone-200 truncate">{m.user?.roblox_display_name || m.user?.roblox_username || 'Unknown'}</p>
                     {m.rank && <p className="text-xs text-amber-500">{m.rank.name}</p>}
                   </div>
-                  {perms.can_manage_members && (
-                    <button onClick={() => handleRemoveMember(m.id)} className="text-stone-500 hover:text-red-400 p-1">
+                  {canManageMember(m) && (
+                    <button onClick={() => handleRemoveMember(m)} className="text-stone-500 hover:text-red-400 p-1">
                       <UserMinus className="w-4 h-4" />
                     </button>
                   )}

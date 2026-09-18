@@ -3,6 +3,7 @@ import {
   supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
 } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
+import { useAuth } from '@/context/AuthContext';
 import {
   Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
   Save, Loader2, Check, UserMinus,
@@ -31,6 +32,7 @@ const EMPTY_FILTERS = {
 
 export function Members() {
   const perms = usePermissions();
+  const { user } = useAuth();
   const [members, setMembers] = useState<MemberWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -259,7 +261,8 @@ export function Members() {
       {selectedMember && (
         <MemberModal
           member={selectedMember}
-          canManage={perms.can_manage_members}
+          hasManagePermission={perms.can_manage_members}
+          canManage={perms.can_manage_members && (perms.is_owner || (user ? selectedMember.group_rank < user.group_rank : false))}
           divisions={divisionOptions}
           allRanks={Array.from(ranks.values())}
           membership={membershipByUser.get(selectedMember.id) || null}
@@ -272,10 +275,11 @@ export function Members() {
 }
 
 function MemberModal({
-  member, canManage, divisions, allRanks, membership, onClose, onChanged,
+  member, canManage, hasManagePermission, divisions, allRanks, membership, onClose, onChanged,
 }: {
   member: MemberWithDetails;
   canManage: boolean;
+  hasManagePermission: boolean;
   divisions: Division[];
   allRanks: DivisionRank[];
   membership: DivisionMembership | null;
@@ -372,6 +376,12 @@ function MemberModal({
           <Row icon={Shield} label="Main Sub" value={member.main_sub || 'Not set'} />
           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
         </div>
+
+        {hasManagePermission && !canManage && (
+          <p className="mt-5 pt-5 border-t border-stone-700 text-xs text-stone-500">
+            You can't assign this member to a division since their Roblox group rank is the same as or higher than yours.
+          </p>
+        )}
 
         {canManage && (
           <div className="mt-5 pt-5 border-t border-stone-700">

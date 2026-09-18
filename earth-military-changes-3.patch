@@ -1,0 +1,123 @@
+git pull origin mainFrom 0c8dbd4f803c4360d058a2dfb9e763f782be5963 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 18 Sep 2026 10:19:53 +0000
+Subject: [PATCH] Require lower Roblox group rank to assign, edit, or remove a
+ member's division/rank
+
+- Members.tsx: assigning a division/rank to someone, and removing them from one, now requires the acting user to outrank them (or be owner); shows an explanation when blocked by rank instead of just hiding the controls silently
+- DivisionDetail.tsx: removing a member from the members tab now requires the same rank check per-member
+---
+ src/pages/DivisionDetail.tsx | 18 ++++++++++++++----
+ src/pages/Members.tsx        | 14 ++++++++++++--
+ 2 files changed, 26 insertions(+), 6 deletions(-)
+
+diff --git a/src/pages/DivisionDetail.tsx b/src/pages/DivisionDetail.tsx
+index 5b8fe08..44a465a 100644
+--- a/src/pages/DivisionDetail.tsx
++++ b/src/pages/DivisionDetail.tsx
+@@ -4,6 +4,7 @@ import {
+   supabase, Division, DivisionRank, DivisionMember, DbUser, ActivityLog,
+ } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
++import { useAuth } from '@/context/AuthContext';
+ import {
+   Swords, Users, Shield, ArrowLeft, Settings, Trash2, Save, Loader2, X,
+   Image as ImageIcon, Activity, Award, UserMinus,
+@@ -22,6 +23,7 @@ export function DivisionDetail() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+   const perms = usePermissions();
++  const { user } = useAuth();
+ 
+   const [division, setDivision] = useState<Division | null>(null);
+   const [ranks, setRanks] = useState<DivisionRank[]>([]);
+@@ -83,9 +85,17 @@ export function DivisionDetail() {
+     setLoading(false);
+   };
+ 
+-  const handleRemoveMember = async (memberId: string) => {
++  const canManageMember = (m: EnrichedMember): boolean => {
++    if (!perms.can_manage_members) return false;
++    if (perms.is_owner) return true;
++    if (!user || !m.user) return false;
++    return m.user.group_rank < user.group_rank;
++  };
++
++  const handleRemoveMember = async (member: EnrichedMember) => {
++    if (!canManageMember(member)) return;
+     if (!confirm('Remove this member from the division?')) return;
+-    await supabase.from('division_members').delete().eq('id', memberId);
++    await supabase.from('division_members').delete().eq('id', member.id);
+     if (id) loadAll(id);
+   };
+ 
+@@ -237,8 +247,8 @@ export function DivisionDetail() {
+                     <p className="text-sm text-stone-200 truncate">{m.user?.roblox_display_name || m.user?.roblox_username || 'Unknown'}</p>
+                     {m.rank && <p className="text-xs text-amber-500">{m.rank.name}</p>}
+                   </div>
+-                  {perms.can_manage_members && (
+-                    <button onClick={() => handleRemoveMember(m.id)} className="text-stone-500 hover:text-red-400 p-1">
++                  {canManageMember(m) && (
++                    <button onClick={() => handleRemoveMember(m)} className="text-stone-500 hover:text-red-400 p-1">
+                       <UserMinus className="w-4 h-4" />
+                     </button>
+                   )}
+diff --git a/src/pages/Members.tsx b/src/pages/Members.tsx
+index 5924931..93f6557 100644
+--- a/src/pages/Members.tsx
++++ b/src/pages/Members.tsx
+@@ -3,6 +3,7 @@ import {
+   supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
+ } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
++import { useAuth } from '@/context/AuthContext';
+ import {
+   Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
+   Save, Loader2, Check, UserMinus,
+@@ -31,6 +32,7 @@ const EMPTY_FILTERS = {
+ 
+ export function Members() {
+   const perms = usePermissions();
++  const { user } = useAuth();
+   const [members, setMembers] = useState<MemberWithDetails[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [search, setSearch] = useState('');
+@@ -259,7 +261,8 @@ export function Members() {
+       {selectedMember && (
+         <MemberModal
+           member={selectedMember}
+-          canManage={perms.can_manage_members}
++          hasManagePermission={perms.can_manage_members}
++          canManage={perms.can_manage_members && (perms.is_owner || (user ? selectedMember.group_rank < user.group_rank : false))}
+           divisions={divisionOptions}
+           allRanks={Array.from(ranks.values())}
+           membership={membershipByUser.get(selectedMember.id) || null}
+@@ -272,10 +275,11 @@ export function Members() {
+ }
+ 
+ function MemberModal({
+-  member, canManage, divisions, allRanks, membership, onClose, onChanged,
++  member, canManage, hasManagePermission, divisions, allRanks, membership, onClose, onChanged,
+ }: {
+   member: MemberWithDetails;
+   canManage: boolean;
++  hasManagePermission: boolean;
+   divisions: Division[];
+   allRanks: DivisionRank[];
+   membership: DivisionMembership | null;
+@@ -373,6 +377,12 @@ function MemberModal({
+           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
+         </div>
+ 
++        {hasManagePermission && !canManage && (
++          <p className="mt-5 pt-5 border-t border-stone-700 text-xs text-stone-500">
++            You can't assign this member to a division since their Roblox group rank is the same as or higher than yours.
++          </p>
++        )}
++
+         {canManage && (
+           <div className="mt-5 pt-5 border-t border-stone-700">
+             <h4 className="ek-label mb-2">Assign to Division</h4>
+-- 
+2.43.0
+
