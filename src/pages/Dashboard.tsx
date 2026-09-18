@@ -123,7 +123,7 @@ export function Dashboard() {
 
         {/* Quick actions */}
         <div className="ek-panel p-5">
-          <h2 className="ek-section-title">Quick Actions EEEEE</h2>
+          <h2 className="ek-section-title">Quick Actions</h2>
           <div className="space-y-2">
             <ActionLink to="/members" icon={Users} label="View Member Profiles" show />
             <ActionLink to="/divisions" icon={Swords} label="View Divisions" show />
