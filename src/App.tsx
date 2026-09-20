@@ -14,6 +14,7 @@ import { Promotions } from '@/pages/Promotions';
 import { Points } from '@/pages/Points';
 import { HRPanel } from '@/pages/HRPanel';
 import { AdminPanel } from '@/pages/AdminPanel';
+import { DamageCalculator } from '@/pages/DamageCalculator';
 import { Terms } from '@/pages/Terms';
 import { Privacy } from '@/pages/Privacy';
 import { Loader2 } from 'lucide-react';
@@ -93,6 +94,7 @@ function AppRoutes() {
       <Route path="/points" element={<ProtectedRoute><Points /></ProtectedRoute>} />
       <Route path="/hr-panel" element={<ProtectedRoute><HRPanel /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+      <Route path="/damage-calculator" element={<ProtectedRoute><DamageCalculator /></ProtectedRoute>} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />

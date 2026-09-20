@@ -171,6 +171,40 @@ export interface GroupRankPermissions {
   updated_at: string;
 }
 
+export const SUB_ELEMENTS = ['Base', 'Lava', 'Metal', 'Sand'] as const;
+export type SubElement = typeof SUB_ELEMENTS[number];
+
+export const SUB_ELEMENT_COLORS: Record<SubElement, { text: string; bg: string; border: string; dot: string }> = {
+  Base: { text: 'text-stone-300', bg: 'bg-stone-700/20', border: 'border-stone-600/40', dot: 'bg-stone-400' },
+  Lava: { text: 'text-orange-400', bg: 'bg-orange-900/20', border: 'border-orange-700/40', dot: 'bg-orange-500' },
+  Metal: { text: 'text-sky-300', bg: 'bg-sky-900/20', border: 'border-sky-700/40', dot: 'bg-sky-400' },
+  Sand: { text: 'text-yellow-400', bg: 'bg-yellow-900/20', border: 'border-yellow-700/40', dot: 'bg-yellow-500' },
+};
+
+export interface Skill {
+  id: string;
+  title: string;
+  description: string;
+  sub_element: SubElement;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillStat {
+  id: string;
+  skill_id: string;
+  name: string;
+  is_scaling: boolean;
+  base_value: number;
+  scale_value: number;
+  static_value: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ActivityLog {
   id: string;
   user_id: string;
