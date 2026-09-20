@@ -200,6 +200,8 @@ export interface SkillStat {
   base_value: number;
   scale_value: number;
   static_value: number;
+  min_value: number | null;
+  max_value: number | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

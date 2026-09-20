@@ -177,10 +177,12 @@ export function DamageCalculator() {
 }
 
 function computeStatValue(stat: SkillStat, strength: number): number {
-  if (stat.is_scaling) {
-    return stat.base_value + strength * stat.scale_value;
-  }
-  return stat.static_value;
+  if (!stat.is_scaling) return stat.static_value;
+
+  let value = stat.base_value + strength * stat.scale_value;
+  if (stat.min_value !== null && value < stat.min_value) value = stat.min_value;
+  if (stat.max_value !== null && value > stat.max_value) value = stat.max_value;
+  return value;
 }
 
 function formatNumber(n: number): string {
@@ -226,12 +228,20 @@ function SkillCard({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2 mt-3">
-            {visibleStats.map((stat) => (
-              <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">
-                <p className="text-xs text-stone-500">{stat.name}</p>
-                <p className={`text-lg font-bold ${colors.text}`}>{formatNumber(computeStatValue(stat, strength))}</p>
-              </div>
-            ))}
+            {visibleStats.map((stat) => {
+              const rawValue = stat.is_scaling ? stat.base_value + strength * stat.scale_value : stat.static_value;
+              const clampedValue = computeStatValue(stat, strength);
+              const isCapped = stat.is_scaling && rawValue !== clampedValue;
+              return (
+                <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">
+                  <p className="text-xs text-stone-500">{stat.name}</p>
+                  <p className={`text-lg font-bold ${colors.text}`}>
+                    {formatNumber(clampedValue)}
+                    {isCapped && <span className="text-xs text-stone-500 font-normal ml-1">(capped)</span>}
+                  </p>
+                </div>
+              );
+            })}
           </div>
           {skill.stats.length > 4 && (
             <button
@@ -255,6 +265,8 @@ interface StatDraft {
   base_value: string;
   scale_value: string;
   static_value: string;
+  min_value: string;
+  max_value: string;
 }
 
 function newStatDraft(): StatDraft {
@@ -265,6 +277,8 @@ function newStatDraft(): StatDraft {
     base_value: '0',
     scale_value: '0',
     static_value: '0',
+    min_value: '',
+    max_value: '',
   };
 }
 
@@ -288,6 +302,8 @@ function SkillEditorModal({
       base_value: String(s.base_value),
       scale_value: String(s.scale_value),
       static_value: String(s.static_value),
+      min_value: s.min_value === null ? '' : String(s.min_value),
+      max_value: s.max_value === null ? '' : String(s.max_value),
     })) || [],
   );
   const [saving, setSaving] = useState(false);
@@ -302,6 +318,16 @@ function SkillEditorModal({
   const handleSave = async () => {
     if (!title.trim()) { setError('Title is required.'); return; }
     if (stats.some((s) => !s.name.trim())) { setError('Every stat needs a name.'); return; }
+    for (const s of stats) {
+      if (s.is_scaling && s.min_value.trim() !== '' && s.max_value.trim() !== '') {
+        const min = parseFloat(s.min_value);
+        const max = parseFloat(s.max_value);
+        if (!Number.isNaN(min) && !Number.isNaN(max) && min > max) {
+          setError(`"${s.name || 'A stat'}" has a min value greater than its max value.`);
+          return;
+        }
+      }
+    }
 
     setSaving(true);
     setError(null);
@@ -348,6 +374,8 @@ function SkillEditorModal({
           base_value: parseFloat(s.base_value) || 0,
           scale_value: parseFloat(s.scale_value) || 0,
           static_value: parseFloat(s.static_value) || 0,
+          min_value: s.min_value.trim() === '' ? null : parseFloat(s.min_value),
+          max_value: s.max_value.trim() === '' ? null : parseFloat(s.max_value),
           sort_order: i,
         })),
       );
@@ -424,27 +452,51 @@ function SkillEditorModal({
                     </div>
 
                     {stat.is_scaling ? (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-stone-500">Base value</label>
-                          <input
-                            type="number"
-                            value={stat.base_value}
-                            onChange={(e) => updateStat(stat.id, { base_value: e.target.value })}
-                            className="ek-input w-full text-sm"
-                          />
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs text-stone-500">Base value</label>
+                            <input
+                              type="number"
+                              value={stat.base_value}
+                              onChange={(e) => updateStat(stat.id, { base_value: e.target.value })}
+                              className="ek-input w-full text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-stone-500">Scale (per strength)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={stat.scale_value}
+                              onChange={(e) => updateStat(stat.id, { scale_value: e.target.value })}
+                              className="ek-input w-full text-sm"
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <label className="text-xs text-stone-500">Scale (per strength)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={stat.scale_value}
-                            onChange={(e) => updateStat(stat.id, { scale_value: e.target.value })}
-                            className="ek-input w-full text-sm"
-                          />
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs text-stone-500">Min value (optional)</label>
+                            <input
+                              type="number"
+                              value={stat.min_value}
+                              onChange={(e) => updateStat(stat.id, { min_value: e.target.value })}
+                              placeholder="No minimum"
+                              className="ek-input w-full text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-stone-500">Max value (optional)</label>
+                            <input
+                              type="number"
+                              value={stat.max_value}
+                              onChange={(e) => updateStat(stat.id, { max_value: e.target.value })}
+                              placeholder="No maximum"
+                              className="ek-input w-full text-sm"
+                            />
+                          </div>
                         </div>
-                      </div>
+                      </>
                     ) : (
                       <div>
                         <label className="text-xs text-stone-500">Static value</label>

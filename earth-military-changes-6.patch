@@ -1,0 +1,222 @@
+From 965779d4c59e004eb9940be3a907f9ae9d0c6f05 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 20 Sep 2026 22:44:05 +0000
+Subject: [PATCH] Add optional min/max clamp to scaling skill stats
+
+- skill_stats gets nullable min_value/max_value columns
+- Scaling formula becomes clamp(base + strength * scale, min, max) when set
+- Editor lets you leave either bound blank for one-sided or unbounded stats, with validation that min cannot exceed max
+- Calculator card shows a small (capped) label when the clamp is actively limiting the value
+---
+ src/lib/supabase.ts                           |   2 +
+ src/pages/DamageCalculator.tsx                | 110 +++++++++++++-----
+ .../20260918160000_006_skill_stat_min_max.sql |  12 ++
+ 3 files changed, 95 insertions(+), 29 deletions(-)
+ create mode 100644 supabase/migrations/20260918160000_006_skill_stat_min_max.sql
+
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+index dd42471..0c58ec3 100644
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -200,6 +200,8 @@ export interface SkillStat {
+   base_value: number;
+   scale_value: number;
+   static_value: number;
++  min_value: number | null;
++  max_value: number | null;
+   sort_order: number;
+   created_at: string;
+   updated_at: string;
+diff --git a/src/pages/DamageCalculator.tsx b/src/pages/DamageCalculator.tsx
+index a90b242..60e4a0c 100644
+--- a/src/pages/DamageCalculator.tsx
++++ b/src/pages/DamageCalculator.tsx
+@@ -177,10 +177,12 @@ export function DamageCalculator() {
+ }
+ 
+ function computeStatValue(stat: SkillStat, strength: number): number {
+-  if (stat.is_scaling) {
+-    return stat.base_value + strength * stat.scale_value;
+-  }
+-  return stat.static_value;
++  if (!stat.is_scaling) return stat.static_value;
++
++  let value = stat.base_value + strength * stat.scale_value;
++  if (stat.min_value !== null && value < stat.min_value) value = stat.min_value;
++  if (stat.max_value !== null && value > stat.max_value) value = stat.max_value;
++  return value;
+ }
+ 
+ function formatNumber(n: number): string {
+@@ -226,12 +228,20 @@ function SkillCard({
+       ) : (
+         <>
+           <div className="grid grid-cols-2 gap-2 mt-3">
+-            {visibleStats.map((stat) => (
+-              <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">
+-                <p className="text-xs text-stone-500">{stat.name}</p>
+-                <p className={`text-lg font-bold ${colors.text}`}>{formatNumber(computeStatValue(stat, strength))}</p>
+-              </div>
+-            ))}
++            {visibleStats.map((stat) => {
++              const rawValue = stat.is_scaling ? stat.base_value + strength * stat.scale_value : stat.static_value;
++              const clampedValue = computeStatValue(stat, strength);
++              const isCapped = stat.is_scaling && rawValue !== clampedValue;
++              return (
++                <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">
++                  <p className="text-xs text-stone-500">{stat.name}</p>
++                  <p className={`text-lg font-bold ${colors.text}`}>
++                    {formatNumber(clampedValue)}
++                    {isCapped && <span className="text-xs text-stone-500 font-normal ml-1">(capped)</span>}
++                  </p>
++                </div>
++              );
++            })}
+           </div>
+           {skill.stats.length > 4 && (
+             <button
+@@ -255,6 +265,8 @@ interface StatDraft {
+   base_value: string;
+   scale_value: string;
+   static_value: string;
++  min_value: string;
++  max_value: string;
+ }
+ 
+ function newStatDraft(): StatDraft {
+@@ -265,6 +277,8 @@ function newStatDraft(): StatDraft {
+     base_value: '0',
+     scale_value: '0',
+     static_value: '0',
++    min_value: '',
++    max_value: '',
+   };
+ }
+ 
+@@ -288,6 +302,8 @@ function SkillEditorModal({
+       base_value: String(s.base_value),
+       scale_value: String(s.scale_value),
+       static_value: String(s.static_value),
++      min_value: s.min_value === null ? '' : String(s.min_value),
++      max_value: s.max_value === null ? '' : String(s.max_value),
+     })) || [],
+   );
+   const [saving, setSaving] = useState(false);
+@@ -302,6 +318,16 @@ function SkillEditorModal({
+   const handleSave = async () => {
+     if (!title.trim()) { setError('Title is required.'); return; }
+     if (stats.some((s) => !s.name.trim())) { setError('Every stat needs a name.'); return; }
++    for (const s of stats) {
++      if (s.is_scaling && s.min_value.trim() !== '' && s.max_value.trim() !== '') {
++        const min = parseFloat(s.min_value);
++        const max = parseFloat(s.max_value);
++        if (!Number.isNaN(min) && !Number.isNaN(max) && min > max) {
++          setError(`"${s.name || 'A stat'}" has a min value greater than its max value.`);
++          return;
++        }
++      }
++    }
+ 
+     setSaving(true);
+     setError(null);
+@@ -348,6 +374,8 @@ function SkillEditorModal({
+           base_value: parseFloat(s.base_value) || 0,
+           scale_value: parseFloat(s.scale_value) || 0,
+           static_value: parseFloat(s.static_value) || 0,
++          min_value: s.min_value.trim() === '' ? null : parseFloat(s.min_value),
++          max_value: s.max_value.trim() === '' ? null : parseFloat(s.max_value),
+           sort_order: i,
+         })),
+       );
+@@ -424,27 +452,51 @@ function SkillEditorModal({
+                     </div>
+ 
+                     {stat.is_scaling ? (
+-                      <div className="grid grid-cols-2 gap-2">
+-                        <div>
+-                          <label className="text-xs text-stone-500">Base value</label>
+-                          <input
+-                            type="number"
+-                            value={stat.base_value}
+-                            onChange={(e) => updateStat(stat.id, { base_value: e.target.value })}
+-                            className="ek-input w-full text-sm"
+-                          />
++                      <>
++                        <div className="grid grid-cols-2 gap-2">
++                          <div>
++                            <label className="text-xs text-stone-500">Base value</label>
++                            <input
++                              type="number"
++                              value={stat.base_value}
++                              onChange={(e) => updateStat(stat.id, { base_value: e.target.value })}
++                              className="ek-input w-full text-sm"
++                            />
++                          </div>
++                          <div>
++                            <label className="text-xs text-stone-500">Scale (per strength)</label>
++                            <input
++                              type="number"
++                              step="0.01"
++                              value={stat.scale_value}
++                              onChange={(e) => updateStat(stat.id, { scale_value: e.target.value })}
++                              className="ek-input w-full text-sm"
++                            />
++                          </div>
+                         </div>
+-                        <div>
+-                          <label className="text-xs text-stone-500">Scale (per strength)</label>
+-                          <input
+-                            type="number"
+-                            step="0.01"
+-                            value={stat.scale_value}
+-                            onChange={(e) => updateStat(stat.id, { scale_value: e.target.value })}
+-                            className="ek-input w-full text-sm"
+-                          />
++                        <div className="grid grid-cols-2 gap-2">
++                          <div>
++                            <label className="text-xs text-stone-500">Min value (optional)</label>
++                            <input
++                              type="number"
++                              value={stat.min_value}
++                              onChange={(e) => updateStat(stat.id, { min_value: e.target.value })}
++                              placeholder="No minimum"
++                              className="ek-input w-full text-sm"
++                            />
++                          </div>
++                          <div>
++                            <label className="text-xs text-stone-500">Max value (optional)</label>
++                            <input
++                              type="number"
++                              value={stat.max_value}
++                              onChange={(e) => updateStat(stat.id, { max_value: e.target.value })}
++                              placeholder="No maximum"
++                              className="ek-input w-full text-sm"
++                            />
++                          </div>
+                         </div>
+-                      </div>
++                      </>
+                     ) : (
+                       <div>
+                         <label className="text-xs text-stone-500">Static value</label>
+diff --git a/supabase/migrations/20260918160000_006_skill_stat_min_max.sql b/supabase/migrations/20260918160000_006_skill_stat_min_max.sql
+new file mode 100644
+index 0000000..d93a8f3
+--- /dev/null
++++ b/supabase/migrations/20260918160000_006_skill_stat_min_max.sql
+@@ -0,0 +1,12 @@
++/*
++# Damage Calculator: Optional Min/Max for Scaling Stats
++
++## Changes
++1. `skill_stats.min_value` and `skill_stats.max_value` - optional clamp bounds for
++   scaling stats. When set, the computed value (base + strength * scale) is clamped
++   to [min_value, max_value]. Either bound can be left unset (null) to be one-sided
++   or fully unbounded. Not used for static stats.
++*/
++
++ALTER TABLE skill_stats ADD COLUMN IF NOT EXISTS min_value numeric;
++ALTER TABLE skill_stats ADD COLUMN IF NOT EXISTS max_value numeric;
+-- 
+2.43.0
+
