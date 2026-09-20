@@ -58,12 +58,17 @@ export function DamageCalculator() {
     const current = group[index];
     if (!other) return;
 
-    // Swap sort_order between the two skills (optimistic local update, then persist)
-    setSkills((prev) => prev.map((s) => {
-      if (s.id === current.id) return { ...s, sort_order: other.sort_order };
-      if (s.id === other.id) return { ...s, sort_order: current.sort_order };
-      return s;
-    }));
+    // Swap sort_order between the two skills, then re-sort the array itself so the
+    // new order is reflected immediately (updating the field alone doesn't reorder
+    // the existing array).
+    setSkills((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id === current.id) return { ...s, sort_order: other.sort_order };
+        if (s.id === other.id) return { ...s, sort_order: current.sort_order };
+        return s;
+      });
+      return [...updated].sort((a, b) => a.sort_order - b.sort_order);
+    });
 
     await Promise.all([
       supabase.from('skills').update({ sort_order: other.sort_order }).eq('id', current.id),
