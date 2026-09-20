@@ -53,6 +53,24 @@ export function DamageCalculator() {
     loadSkills();
   };
 
+  const handleReorder = async (group: SkillWithStats[], index: number, direction: -1 | 1) => {
+    const other = group[index + direction];
+    const current = group[index];
+    if (!other) return;
+
+    // Swap sort_order between the two skills (optimistic local update, then persist)
+    setSkills((prev) => prev.map((s) => {
+      if (s.id === current.id) return { ...s, sort_order: other.sort_order };
+      if (s.id === other.id) return { ...s, sort_order: current.sort_order };
+      return s;
+    }));
+
+    await Promise.all([
+      supabase.from('skills').update({ sort_order: other.sort_order }).eq('id', current.id),
+      supabase.from('skills').update({ sort_order: current.sort_order }).eq('id', other.id),
+    ]);
+  };
+
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -142,8 +160,8 @@ export function DamageCalculator() {
                   <h2 className={`text-sm font-semibold uppercase tracking-wide ${colors.text}`}>{el}</h2>
                   <span className="text-xs text-stone-600">{elSkills.length}</span>
                 </div>
-                <div className="grid md:grid-cols-2 gap-3">
-                  {elSkills.map((skill) => (
+                <div className="space-y-3">
+                  {elSkills.map((skill, index) => (
                     <SkillCard
                       key={skill.id}
                       skill={skill}
@@ -154,6 +172,8 @@ export function DamageCalculator() {
                       onToggleExpand={() => toggleExpanded(skill.id)}
                       onEdit={() => setEditingSkill(skill)}
                       onDelete={() => handleDeleteSkill(skill.id)}
+                      onMoveUp={!search.trim() && index > 0 ? () => handleReorder(elSkills, index, -1) : undefined}
+                      onMoveDown={!search.trim() && index < elSkills.length - 1 ? () => handleReorder(elSkills, index, 1) : undefined}
                     />
                   ))}
                 </div>
@@ -191,7 +211,7 @@ function formatNumber(n: number): string {
 }
 
 function SkillCard({
-  skill, strength, colors, isOwner, isExpanded, onToggleExpand, onEdit, onDelete,
+  skill, strength, colors, isOwner, isExpanded, onToggleExpand, onEdit, onDelete, onMoveUp, onMoveDown,
 }: {
   skill: SkillWithStats;
   strength: number;
@@ -201,8 +221,10 @@ function SkillCard({
   onToggleExpand: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }) {
-  const visibleStats = isExpanded ? skill.stats : skill.stats.slice(0, 4);
+  const visibleStats = isExpanded ? skill.stats : skill.stats.slice(0, 6);
 
   return (
     <div className={`ek-panel p-4 border ${colors.border} ${colors.bg}`}>
@@ -213,6 +235,22 @@ function SkillCard({
         </div>
         {isOwner && (
           <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={onMoveUp}
+              disabled={!onMoveUp}
+              className="text-stone-400 hover:text-amber-400 p-1 disabled:opacity-25 disabled:hover:text-stone-400"
+              title="Move up"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onMoveDown}
+              disabled={!onMoveDown}
+              className="text-stone-400 hover:text-amber-400 p-1 disabled:opacity-25 disabled:hover:text-stone-400"
+              title="Move down"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
             <button onClick={onEdit} className="text-stone-400 hover:text-amber-400 p-1">
               <Settings className="w-4 h-4" />
             </button>
@@ -227,7 +265,7 @@ function SkillCard({
         <p className="text-stone-600 text-sm mt-3">No stats configured for this skill.</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2 mt-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-3">
             {visibleStats.map((stat) => {
               const rawValue = stat.is_scaling ? stat.base_value + strength * stat.scale_value : stat.static_value;
               const clampedValue = computeStatValue(stat, strength);
@@ -243,13 +281,13 @@ function SkillCard({
               );
             })}
           </div>
-          {skill.stats.length > 4 && (
+          {skill.stats.length > 6 && (
             <button
               onClick={onToggleExpand}
               className="flex items-center gap-1 text-xs text-stone-500 hover:text-stone-300 mt-3"
             >
               {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {isExpanded ? 'Show less' : `Show ${skill.stats.length - 4} more`}
+              {isExpanded ? 'Show less' : `Show ${skill.stats.length - 6} more`}
             </button>
           )}
         </>
