@@ -13,6 +13,7 @@ interface MemberWithDetails extends DbUser {
   division_name: string | null;
   division_rank_name: string | null;
   military_points: number;
+  recent_points: number;
 }
 
 interface DivisionMembership {
@@ -73,13 +74,17 @@ export function Members() {
     // Get points for all users
     const enriched: MemberWithDetails[] = [];
     for (const u of users || []) {
-      const { data: pts } = await supabase.rpc('get_user_military_points', { p_user_id: u.id });
+      const [{ data: pts }, { data: recentPts }] = await Promise.all([
+        supabase.rpc('get_user_military_points', { p_user_id: u.id }),
+        supabase.rpc('get_user_recent_points', { p_user_id: u.id }),
+      ]);
       const memberInfo = memberMap.get(u.id);
       enriched.push({
         ...u,
         division_name: memberInfo ? divMap.get(memberInfo.division_id)?.name || null : null,
         division_rank_name: memberInfo && memberInfo.rank_id ? rankMap.get(memberInfo.rank_id)?.name || null : null,
         military_points: pts || 0,
+        recent_points: recentPts || 0,
       });
     }
 
@@ -370,7 +375,8 @@ function MemberModal({
         <div className="space-y-3">
           <Row icon={Shield} label="Group Rank" value={member.group_rank_name} />
           <Row icon={Award} label="Division Rank" value={member.division_rank_name || 'None'} />
-          <Row icon={Award} label="Military Points" value={String(member.military_points)} />
+          <Row icon={Award} label="Total Points" value={String(member.military_points)} />
+          <Row icon={Award} label="Recent Points (this cycle)" value={String(member.recent_points)} />
           <Row icon={Clock} label="Timezone" value={member.timezone || 'Not set'} />
           <Row icon={Compass} label="Selected Path" value={member.selected_path || 'Not set'} />
           <Row icon={Shield} label="Main Sub" value={member.main_sub || 'Not set'} />

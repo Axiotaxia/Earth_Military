@@ -5,7 +5,7 @@ import {
   Shield, Award, Swords, ChevronRight, BarChart3, Users, Clock, Compass, TrendingUp,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { supabase, Division, DivisionMember, DivisionRank } from '@/lib/supabase';
+import { supabase, Division, DivisionRank } from '@/lib/supabase';
 
 export function Dashboard() {
   const { user } = useAuth();
@@ -15,14 +15,19 @@ export function Dashboard() {
     rank: null,
   });
   const [militaryPoints, setMilitaryPoints] = useState(0);
+  const [recentPoints, setRecentPoints] = useState(0);
   const [totalMembers, setTotalMembers] = useState(0);
 
   useEffect(() => {
     if (!user) return;
 
     (async () => {
-      const { data: pts } = await supabase.rpc('get_user_military_points', { p_user_id: user.id });
+      const [{ data: pts }, { data: recentPts }] = await Promise.all([
+        supabase.rpc('get_user_military_points', { p_user_id: user.id }),
+        supabase.rpc('get_user_recent_points', { p_user_id: user.id }),
+      ]);
       setMilitaryPoints(pts || 0);
+      setRecentPoints(recentPts || 0);
 
       const { data: member } = await supabase
         .from('division_members')
@@ -99,8 +104,9 @@ export function Dashboard() {
       </div>
 
       {/* Quick stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Award} label="Military Points" value={militaryPoints} color="amber" />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <StatCard icon={Award} label="Total Points" value={militaryPoints} color="amber" />
+        <StatCard icon={Award} label="Recent Points" value={recentPoints} color="green" />
         <StatCard icon={Swords} label="Division" value={divisionInfo.division?.name || 'Unassigned'} color="green" />
         <StatCard icon={Shield} label="Division Rank" value={divisionInfo.rank?.name || 'None'} color="stone" />
         <StatCard icon={Users} label="Total Members" value={totalMembers} color="green" />

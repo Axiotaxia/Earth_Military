@@ -132,6 +132,24 @@ export interface PointTransaction {
   created_at: string;
 }
 
+/**
+ * "Recent points" resets every 2 weeks, anchored to Friday 2026-09-18 (the last
+ * reset at the time this was added). Boundaries repeat every 14 days from there,
+ * matching the get_current_points_cycle_start SQL function used server-side.
+ */
+export const POINTS_CYCLE_ANCHOR = new Date('2026-09-18T00:00:00Z');
+export const POINTS_CYCLE_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function getCurrentPointsCycleStart(now: Date = new Date()): Date {
+  const elapsed = now.getTime() - POINTS_CYCLE_ANCHOR.getTime();
+  const cyclesSinceAnchor = Math.floor(elapsed / POINTS_CYCLE_LENGTH_MS);
+  return new Date(POINTS_CYCLE_ANCHOR.getTime() + cyclesSinceAnchor * POINTS_CYCLE_LENGTH_MS);
+}
+
+export function getNextPointsResetDate(now: Date = new Date()): Date {
+  return new Date(getCurrentPointsCycleStart(now).getTime() + POINTS_CYCLE_LENGTH_MS);
+}
+
 export interface UserPermissions {
   id: string;
   user_id: string;

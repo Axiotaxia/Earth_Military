@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, TIMEZONES, PATHS, SUBS, PointTransaction, Division, DivisionRank } from '@/lib/supabase';
+import { supabase, TIMEZONES, PATHS, SUBS, PointTransaction, Division, DivisionRank, DbUser, getNextPointsResetDate } from '@/lib/supabase';
 import {
   Shield, Clock, Compass, Award, Users, Save, Loader2, Check, History,
 } from 'lucide-react';
@@ -13,7 +13,8 @@ export function Profile() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [militaryPoints, setMilitaryPoints] = useState(0);
-  const [transactions, setTransactions] = useState<PointTransaction[]>([]);
+  const [recentPoints, setRecentPoints] = useState(0);
+  const [transactions, setTransactions] = useState<(PointTransaction & { awarded_by_user: DbUser | null })[]>([]);
   const [division, setDivision] = useState<Division | null>(null);
   const [divisionRank, setDivisionRank] = useState<DivisionRank | null>(null);
 
@@ -24,8 +25,12 @@ export function Profile() {
     setMainSub(user.main_sub || '');
 
     (async () => {
-      const { data: pts } = await supabase.rpc('get_user_military_points', { p_user_id: user.id });
+      const [{ data: pts }, { data: recentPts }] = await Promise.all([
+        supabase.rpc('get_user_military_points', { p_user_id: user.id }),
+        supabase.rpc('get_user_recent_points', { p_user_id: user.id }),
+      ]);
       setMilitaryPoints(pts || 0);
+      setRecentPoints(recentPts || 0);
 
       const { data: txns } = await supabase
         .from('point_transactions')
@@ -33,7 +38,18 @@ export function Profile() {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(20);
-      setTransactions(txns || []);
+
+      const awarderIds = Array.from(new Set((txns || []).map((t) => t.awarded_by).filter((id): id is string => !!id)));
+      let awarderMap = new Map<string, DbUser>();
+      if (awarderIds.length > 0) {
+        const { data: awarders } = await supabase.from('users').select('*').in('id', awarderIds);
+        awarderMap = new Map((awarders || []).map((a) => [a.id, a]));
+      }
+
+      setTransactions((txns || []).map((t) => ({
+        ...t,
+        awarded_by_user: t.awarded_by ? awarderMap.get(t.awarded_by) || null : null,
+      })));
 
       const { data: member } = await supabase
         .from('division_members')
@@ -53,6 +69,10 @@ export function Profile() {
   }, [user]);
 
   if (!user) return null;
+
+  const nextResetLabel = getNextPointsResetDate().toLocaleDateString(undefined, {
+    weekday: 'long', month: 'short', day: 'numeric',
+  });
 
   const handleSave = async () => {
     setSaving(true);
@@ -117,11 +137,16 @@ export function Profile() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="ek-panel p-4 text-center">
           <Award className="w-6 h-6 text-amber-400 mx-auto mb-2" />
           <p className="text-2xl font-bold text-stone-100">{militaryPoints}</p>
-          <p className="text-xs text-stone-500 uppercase tracking-wider">Military Points</p>
+          <p className="text-xs text-stone-500 uppercase tracking-wider">Total Points</p>
+        </div>
+        <div className="ek-panel p-4 text-center">
+          <Award className="w-6 h-6 text-green-400 mx-auto mb-2" />
+          <p className="text-2xl font-bold text-stone-100">{recentPoints}</p>
+          <p className="text-xs text-stone-500 uppercase tracking-wider">Recent Points</p>
         </div>
         <div className="ek-panel p-4 text-center">
           <Shield className="w-6 h-6 text-green-400 mx-auto mb-2" />
@@ -182,9 +207,13 @@ export function Profile() {
 
       {/* Points history */}
       <div className="ek-panel p-6">
-        <h2 className="ek-section-title flex items-center gap-2">
-          <History className="w-4 h-4" /> Points History
-        </h2>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <h2 className="ek-section-title mb-0 border-none pb-0 flex items-center gap-2">
+            <History className="w-4 h-4" /> Points History
+          </h2>
+          <p className="text-xs text-stone-500">Recent points reset next on {nextResetLabel}.</p>
+        </div>
+        <div className="border-b border-stone-700 mb-4" />
         {transactions.length === 0 ? (
           <p className="text-stone-500 text-sm text-center py-6">No point transactions yet.</p>
         ) : (
@@ -193,7 +222,12 @@ export function Profile() {
               <div key={t.id} className="flex items-center justify-between p-3 bg-stone-800/50 rounded-md border border-stone-700/50">
                 <div>
                   <p className="text-sm text-stone-200">{t.reason}</p>
-                  <p className="text-xs text-stone-500">{new Date(t.created_at).toLocaleDateString()}</p>
+                  <p className="text-xs text-stone-500">
+                    {new Date(t.created_at).toLocaleDateString()}
+                    {t.awarded_by_user && (
+                      <> &middot; by {t.awarded_by_user.roblox_display_name || t.awarded_by_user.roblox_username}</>
+                    )}
+                  </p>
                 </div>
                 <span className={`text-sm font-bold ${t.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {t.points >= 0 ? '+' : ''}{t.points}

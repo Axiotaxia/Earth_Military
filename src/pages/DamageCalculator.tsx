@@ -5,7 +5,7 @@ import {
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import {
-  Calculator, Search, Plus, Settings, Trash2, X, Save, Loader2, Swords, ChevronDown, ChevronUp,
+  Calculator, Search, Plus, Settings, Trash2, X, Save, Loader2, Swords, ChevronDown, ChevronUp, GitCompare,
 } from 'lucide-react';
 
 interface SkillWithStats extends Skill {
@@ -17,7 +17,11 @@ export function DamageCalculator() {
   const { user } = useAuth();
   const [skills, setSkills] = useState<SkillWithStats[]>([]);
   const [loading, setLoading] = useState(true);
-  const [strength, setStrength] = useState<number>(100);
+  const [strengthInput, setStrengthInput] = useState<string>('100');
+  const strength = parseFloat(strengthInput) || 0;
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  const [compareStrengthInput, setCompareStrengthInput] = useState<string>('200');
+  const compareStrength = parseFloat(compareStrengthInput) || 0;
   const [search, setSearch] = useState('');
   const [editingSkill, setEditingSkill] = useState<SkillWithStats | 'new' | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -115,16 +119,46 @@ export function DamageCalculator() {
 
       {/* Strength input */}
       <div className="ek-panel p-5">
-        <label className="ek-label">Your Strength</label>
-        <input
-          type="number"
-          value={strength}
-          onChange={(e) => setStrength(Math.max(0, parseFloat(e.target.value) || 0))}
-          className="ek-input w-full text-lg font-semibold"
-          placeholder="Enter strength..."
-        />
+        <div className="flex items-center justify-between mb-1">
+          <label className="ek-label mb-0">{compareEnabled ? 'Strength A' : 'Your Strength'}</label>
+          <button
+            onClick={() => setCompareEnabled(!compareEnabled)}
+            className={`ek-btn text-xs flex items-center gap-1.5 py-1 ${compareEnabled ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
+          >
+            <GitCompare className="w-3.5 h-3.5" /> Compare
+          </button>
+        </div>
+        <div className={compareEnabled ? 'grid sm:grid-cols-2 gap-3' : ''}>
+          <input
+            type="number"
+            value={strengthInput}
+            onChange={(e) => setStrengthInput(e.target.value)}
+            onBlur={() => {
+              if (strengthInput.trim() === '' || parseFloat(strengthInput) < 0) setStrengthInput('0');
+            }}
+            className="ek-input w-full text-lg font-semibold"
+            placeholder="Enter strength..."
+          />
+          {compareEnabled && (
+            <div>
+              <label className="ek-label sm:hidden">Strength B</label>
+              <input
+                type="number"
+                value={compareStrengthInput}
+                onChange={(e) => setCompareStrengthInput(e.target.value)}
+                onBlur={() => {
+                  if (compareStrengthInput.trim() === '' || parseFloat(compareStrengthInput) < 0) setCompareStrengthInput('0');
+                }}
+                className="ek-input w-full text-lg font-semibold"
+                placeholder="Enter strength to compare..."
+              />
+            </div>
+          )}
+        </div>
         <p className="text-xs text-stone-500 mt-2">
-          All scaling stats below update automatically using this value.
+          {compareEnabled
+            ? 'Scaling stats below show how they change from Strength A to Strength B.'
+            : 'All scaling stats below update automatically using this value.'}
         </p>
       </div>
 
@@ -171,6 +205,7 @@ export function DamageCalculator() {
                       key={skill.id}
                       skill={skill}
                       strength={strength}
+                      compareStrength={compareEnabled ? compareStrength : null}
                       colors={colors}
                       isOwner={perms.is_owner}
                       isExpanded={expanded.has(skill.id)}
@@ -216,10 +251,11 @@ function formatNumber(n: number): string {
 }
 
 function SkillCard({
-  skill, strength, colors, isOwner, isExpanded, onToggleExpand, onEdit, onDelete, onMoveUp, onMoveDown,
+  skill, strength, compareStrength, colors, isOwner, isExpanded, onToggleExpand, onEdit, onDelete, onMoveUp, onMoveDown,
 }: {
   skill: SkillWithStats;
   strength: number;
+  compareStrength: number | null;
   colors: { text: string; bg: string; border: string; dot: string };
   isOwner: boolean;
   isExpanded: boolean;
@@ -230,6 +266,7 @@ function SkillCard({
   onMoveDown?: () => void;
 }) {
   const visibleStats = isExpanded ? skill.stats : skill.stats.slice(0, 6);
+  const isComparing = compareStrength !== null;
 
   return (
     <div className={`ek-panel p-4 border ${colors.border} ${colors.bg}`}>
@@ -270,10 +307,31 @@ function SkillCard({
         <p className="text-stone-600 text-sm mt-3">No stats configured for this skill.</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-3">
+          <div className={`grid gap-2 mt-3 ${isComparing ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'}`}>
             {visibleStats.map((stat) => {
-              const rawValue = stat.is_scaling ? stat.base_value + strength * stat.scale_value : stat.static_value;
               const clampedValue = computeStatValue(stat, strength);
+
+              if (isComparing && stat.is_scaling) {
+                const compareValue = computeStatValue(stat, compareStrength);
+                const delta = compareValue - clampedValue;
+                return (
+                  <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">
+                    <p className="text-xs text-stone-500">{stat.name}</p>
+                    <p className={`text-lg font-bold ${colors.text} flex items-center gap-1.5 flex-wrap`}>
+                      {formatNumber(clampedValue)}
+                      <span className="text-stone-500 text-sm font-normal">&rarr;</span>
+                      {formatNumber(compareValue)}
+                      {delta !== 0 && (
+                        <span className={`text-xs font-normal ${delta > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          ({delta > 0 ? '+' : ''}{formatNumber(delta)})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                );
+              }
+
+              const rawValue = stat.is_scaling ? stat.base_value + strength * stat.scale_value : stat.static_value;
               const isCapped = stat.is_scaling && rawValue !== clampedValue;
               return (
                 <div key={stat.id} className="bg-stone-900/50 rounded-md px-3 py-2">

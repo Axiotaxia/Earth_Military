@@ -24,12 +24,35 @@ export function Points() {
   const [selectedUsers, setSelectedUsers] = useState<MassPointEntry[]>([]);
   const [awarding, setAwarding] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [recentAwards, setRecentAwards] = useState<{ user_id: string; points: number; reason: string; created_at: string }[]>([]);
+  const [recentAwards, setRecentAwards] = useState<{
+    user_id: string; points: number; reason: string; created_at: string; recipient: DbUser | null; awarder: DbUser | null;
+  }[]>([]);
   const [showManageTypes, setShowManageTypes] = useState(false);
 
   const loadEventTypes = async () => {
     const { data } = await supabase.from('point_event_types').select('*').order('sort_order');
     setEventTypes(data || []);
+  };
+
+  const loadRecentAwards = async () => {
+    const { data: recent } = await supabase
+      .from('point_transactions')
+      .select('user_id, awarded_by, points, reason, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const userIds = Array.from(new Set((recent || []).flatMap((r) => [r.user_id, r.awarded_by].filter((id): id is string => !!id))));
+    let userMap = new Map<string, DbUser>();
+    if (userIds.length > 0) {
+      const { data: users } = await supabase.from('users').select('*').in('id', userIds);
+      userMap = new Map((users || []).map((u) => [u.id, u]));
+    }
+
+    setRecentAwards((recent || []).map((r) => ({
+      ...r,
+      recipient: userMap.get(r.user_id) || null,
+      awarder: r.awarded_by ? userMap.get(r.awarded_by) || null : null,
+    })));
   };
 
   useEffect(() => {
@@ -41,13 +64,7 @@ export function Points() {
         .order('roblox_username');
       setAllUsers(data || []);
 
-      const { data: recent } = await supabase
-        .from('point_transactions')
-        .select('user_id, points, reason, created_at')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setRecentAwards(recent || []);
-
+      await loadRecentAwards();
       await loadEventTypes();
     })();
   }, []);
@@ -113,6 +130,7 @@ export function Points() {
         event_data: { points, reason: reason.trim(), awarded_by: user!.id },
       }));
       await supabase.from('activity_log').insert(activities);
+      await loadRecentAwards();
 
       setSuccess(true);
       setTimeout(() => {
@@ -284,8 +302,14 @@ export function Points() {
             {recentAwards.map((a, i) => (
               <div key={i} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
                 <div>
-                  <p className="text-sm text-stone-200">{a.reason}</p>
-                  <p className="text-xs text-stone-500">{new Date(a.created_at).toLocaleDateString()}</p>
+                  <p className="text-sm text-stone-200">
+                    {a.recipient?.roblox_display_name || a.recipient?.roblox_username || 'Unknown'}
+                    <span className="text-stone-500 font-normal"> &middot; {a.reason}</span>
+                  </p>
+                  <p className="text-xs text-stone-500">
+                    {new Date(a.created_at).toLocaleDateString()}
+                    {a.awarder && <> &middot; given by {a.awarder.roblox_display_name || a.awarder.roblox_username}</>}
+                  </p>
                 </div>
                 <span className={`text-sm font-bold ${a.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {a.points >= 0 ? '+' : ''}{a.points}
