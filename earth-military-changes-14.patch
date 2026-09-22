@@ -1,0 +1,26 @@
+From e5a869004633eaafc619b79a1984dbbfbb302336 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 22 Sep 2026 22:38:20 +0000
+Subject: [PATCH] Add 'Non Bending' as a Main Sub option for
+ profiles/onboarding
+
+Separate from the Damage Calculator's sub elements - this is the SUBS list used in Onboarding, Profile editing, and the Members filter. main_sub is a free-text column with no DB constraint, so no migration needed.
+---
+ src/lib/supabase.ts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+index 8ebd916..7837ff7 100644
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -71,6 +71,7 @@ export const SUBS = [
+   'Lava',
+   'Metal',
+   'Sand',
++  'Non Bending',
+ ] as const;
+ 
+ export interface DbUser {
+-- 
+2.43.0
+

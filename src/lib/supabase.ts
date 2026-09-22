@@ -71,6 +71,7 @@ export const SUBS = [
   'Lava',
   'Metal',
   'Sand',
+  'Non Bending',
 ] as const;
 
 export interface DbUser {
