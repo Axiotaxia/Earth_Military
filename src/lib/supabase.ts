@@ -14,6 +14,9 @@ export const ROBLOX_CLIENT_ID = '4235495123293811435';
 export const ROBLOX_GROUP_ID = 592750791;
 export const OWNER_ROBLOX_ID = 593587739;
 
+/** Minimum Roblox group rank required to onboard or use the site: Private. */
+export const MIN_SITE_ACCESS_RANK = 2;
+
 export const ROBLOX_RANKS: { rank: number; name: string }[] = [
   { rank: 0, name: 'Guest' },
   { rank: 1, name: 'Citizen' },
