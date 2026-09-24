@@ -1,0 +1,461 @@
+From 0df133d29add84d700531a5c5857d51e5249c2df Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Thu, 24 Sep 2026 21:21:56 +0000
+Subject: [PATCH] Fix sidebar order, change points cycle to 4 weeks, add
+ Sergeant Promotions tab
+
+- Fix Promotions nav item rendering below Damage Calculator instead of right after Divisions
+- Recent points now resets every 4 weeks instead of 2, still anchored to Friday 2026-09-18
+- New HR Panel sub-tab: Sergeant Promotions, listing Corporals who have reached 40+ recent points
+  - Tracked in a new sergeant_promotion_candidates table so it persists across recent-points resets
+  - Row created via check_sergeant_promotion_eligibility RPC, called when points are awarded and swept on tab load
+  - Row cleared automatically once the person's Roblox rank reaches Sergeant, via the OAuth login sync
+  - Shows the date each person first reached 40 recent points, plus their current recent points
+---
+ src/components/Layout.tsx                     |   4 +-
+ src/lib/supabase.ts                           |  14 +-
+ src/pages/HRPanel.tsx                         | 178 ++++++++++++++++--
+ src/pages/Points.tsx                          |   7 +
+ supabase/functions/roblox-oauth/index.ts      |   9 +
+ ...260921120000_009_recent_points_4_weeks.sql |  19 ++
+ ...0000_010_sergeant_promotion_candidates.sql |  73 +++++++
+ 7 files changed, 279 insertions(+), 25 deletions(-)
+ create mode 100644 supabase/migrations/20260921120000_009_recent_points_4_weeks.sql
+ create mode 100644 supabase/migrations/20260921130000_010_sergeant_promotion_candidates.sql
+
+diff --git a/src/components/Layout.tsx b/src/components/Layout.tsx
+index 0414257..ac8da51 100644
+--- a/src/components/Layout.tsx
++++ b/src/components/Layout.tsx
+@@ -31,11 +31,11 @@ export function Layout({ children }: { children: ReactNode }) {
+     { to: '/profile', label: 'My Profile', icon: Shield, show: true },
+     { to: '/members', label: 'Member Profiles', icon: Users, show: true },
+     { to: '/divisions', label: 'Divisions', icon: Swords, show: true },
+-    { to: '/damage-calculator', label: 'Damage Calculator', icon: Calculator, show: true },
+     { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: onDivisionsTab && perms.can_promote },
++    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
++    { to: '/damage-calculator', label: 'Damage Calculator', icon: Calculator, show: true },
+     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
+     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
+-    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
+     { to: '/admin', label: 'Admin Panel', icon: ShieldAlert, permission: 'is_owner', show: perms.is_owner },
+   ];
+ 
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+index 4413d3b..ee7b483 100644
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -137,12 +137,12 @@ export interface PointTransaction {
+ }
+ 
+ /**
+- * "Recent points" resets every 2 weeks, anchored to Friday 2026-09-18 (the last
+- * reset at the time this was added). Boundaries repeat every 14 days from there,
++ * "Recent points" resets every 4 weeks, anchored to Friday 2026-09-18 (the last
++ * reset at the time this was added). Boundaries repeat every 28 days from there,
+  * matching the get_current_points_cycle_start SQL function used server-side.
+  */
+ export const POINTS_CYCLE_ANCHOR = new Date('2026-09-18T00:00:00Z');
+-export const POINTS_CYCLE_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
++export const POINTS_CYCLE_LENGTH_MS = 28 * 24 * 60 * 60 * 1000;
+ 
+ export function getCurrentPointsCycleStart(now: Date = new Date()): Date {
+   const elapsed = now.getTime() - POINTS_CYCLE_ANCHOR.getTime();
+@@ -237,3 +237,11 @@ export interface ActivityLog {
+   event_data: Record<string, unknown> | null;
+   created_at: string;
+ }
++
++export interface SergeantPromotionCandidate {
++  id: string;
++  user_id: string;
++  qualified_at: string;
++  recent_points_at_qualification: number;
++  created_at: string;
++}
+diff --git a/src/pages/HRPanel.tsx b/src/pages/HRPanel.tsx
+index 6f6d706..812d06a 100644
+--- a/src/pages/HRPanel.tsx
++++ b/src/pages/HRPanel.tsx
+@@ -1,11 +1,14 @@
+ import { useEffect, useState, useMemo } from 'react';
+-import { supabase, DbUser, Division, DivisionRank, DivisionMember, ActivityLog, ROBLOX_RANKS } from '@/lib/supabase';
++import {
++  supabase, DbUser, Division, DivisionRank, DivisionMember, ActivityLog, ROBLOX_RANKS, SergeantPromotionCandidate,
++} from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
+ import {
+-  BarChart3, Users, TrendingUp, Clock, Compass, Shield, Award, Activity,
++  BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp,
+ } from 'lucide-react';
+ 
+ type Period = 7 | 14 | 30;
++type HRTab = 'analytics' | 'sergeant-promotions';
+ 
+ interface UserActivity {
+   user: DbUser;
+@@ -18,8 +21,14 @@ interface DivisionStat {
+   ranks: DivisionRank[];
+ }
+ 
++interface SergeantCandidateWithUser extends SergeantPromotionCandidate {
++  user: DbUser | null;
++  currentRecentPoints: number;
++}
++
+ export function HRPanel() {
+   const perms = usePermissions();
++  const [tab, setTab] = useState<HRTab>('analytics');
+   const [period, setPeriod] = useState<Period>(7);
+   const [allUsers, setAllUsers] = useState<DbUser[]>([]);
+   const [divisions, setDivisions] = useState<Division[]>([]);
+@@ -27,6 +36,8 @@ export function HRPanel() {
+   const [divisionRanks, setDivisionRanks] = useState<DivisionRank[]>([]);
+   const [activities, setActivities] = useState<ActivityLog[]>([]);
+   const [loading, setLoading] = useState(true);
++  const [candidates, setCandidates] = useState<SergeantCandidateWithUser[]>([]);
++  const [candidatesLoading, setCandidatesLoading] = useState(true);
+ 
+   useEffect(() => {
+     (async () => {
+@@ -57,6 +68,48 @@ export function HRPanel() {
+     })();
+   }, [period]);
+ 
++  const loadCandidates = async () => {
++    setCandidatesLoading(true);
++
++    // Safety-net sweep: check every current Corporal in case the award-time
++    // check was missed (e.g. points adjusted directly, or a past bug).
++    const { data: corporals } = await supabase.from('users').select('id').eq('group_rank', 4);
++    if (corporals && corporals.length > 0) {
++      await Promise.all(
++        corporals.map((c) => supabase.rpc('check_sergeant_promotion_eligibility', { p_user_id: c.id })),
++      );
++    }
++
++    const { data: rows } = await supabase
++      .from('sergeant_promotion_candidates')
++      .select('*')
++      .order('qualified_at', { ascending: true });
++
++    const userIds = (rows || []).map((r) => r.user_id);
++    let userMap = new Map<string, DbUser>();
++    if (userIds.length > 0) {
++      const { data: users } = await supabase.from('users').select('*').in('id', userIds);
++      userMap = new Map((users || []).map((u) => [u.id, u]));
++    }
++
++    const enriched: SergeantCandidateWithUser[] = [];
++    for (const row of rows || []) {
++      const { data: recentPts } = await supabase.rpc('get_user_recent_points', { p_user_id: row.user_id });
++      enriched.push({
++        ...row,
++        user: userMap.get(row.user_id) || null,
++        currentRecentPoints: recentPts || 0,
++      });
++    }
++
++    setCandidates(enriched);
++    setCandidatesLoading(false);
++  };
++
++  useEffect(() => {
++    if (tab === 'sergeant-promotions') loadCandidates();
++  }, [tab]);
++
+   const signedUpUsers = useMemo(() => allUsers.filter((u) => u.onboarded), [allUsers]);
+ 
+   const userActivityMap = useMemo(() => {
+@@ -140,32 +193,55 @@ export function HRPanel() {
+     );
+   }
+ 
+-  if (loading) {
+-    return <div className="text-center py-12 text-stone-500">Loading HR analytics...</div>;
+-  }
+-
+   return (
+     <div className="space-y-6">
+       <div className="flex items-center justify-between flex-wrap gap-4">
+         <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
+           HR Analytics Panel
+         </h1>
+-        {/* Period selector */}
+-        <div className="flex gap-1 bg-stone-800/50 rounded-md p-1">
+-          {([7, 14, 30] as Period[]).map((p) => (
+-            <button
+-              key={p}
+-              onClick={() => setPeriod(p)}
+-              className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
+-                period === p ? 'bg-green-700 text-white' : 'text-stone-400 hover:text-stone-200'
+-              }`}
+-            >
+-              {p} days
+-            </button>
+-          ))}
+-        </div>
++        {tab === 'analytics' && (
++          <div className="flex gap-1 bg-stone-800/50 rounded-md p-1">
++            {([7, 14, 30] as Period[]).map((p) => (
++              <button
++                key={p}
++                onClick={() => setPeriod(p)}
++                className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
++                  period === p ? 'bg-green-700 text-white' : 'text-stone-400 hover:text-stone-200'
++                }`}
++              >
++                {p} days
++              </button>
++            ))}
++          </div>
++        )}
++      </div>
++
++      {/* Sub tabs */}
++      <div className="flex gap-2 border-b border-stone-800">
++        <button
++          onClick={() => setTab('analytics')}
++          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
++            tab === 'analytics' ? 'border-green-500 text-green-400' : 'border-transparent text-stone-500 hover:text-stone-300'
++          }`}
++        >
++          <BarChart3 className="w-4 h-4" /> Analytics
++        </button>
++        <button
++          onClick={() => setTab('sergeant-promotions')}
++          className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
++            tab === 'sergeant-promotions' ? 'border-green-500 text-green-400' : 'border-transparent text-stone-500 hover:text-stone-300'
++          }`}
++        >
++          <ChevronsUp className="w-4 h-4" /> Sergeant Promotions
++        </button>
+       </div>
+ 
++      {tab === 'sergeant-promotions' ? (
++        <SergeantPromotionsTab candidates={candidates} loading={candidatesLoading} />
++      ) : loading ? (
++        <div className="text-center py-12 text-stone-500">Loading HR analytics...</div>
++      ) : (
++        <>
+       {/* Overview stats */}
+       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+         <OverviewCard icon={Users} label="Total Members" value={allUsers.length} color="green" />
+@@ -313,6 +389,8 @@ export function HRPanel() {
+           </div>
+         )}
+       </div>
++        </>
++      )}
+     </div>
+   );
+ }
+@@ -347,3 +425,63 @@ function ActivityRow({ name, count }: { name: string; count: number }) {
+     </div>
+   );
+ }
++
++function SergeantPromotionsTab({
++  candidates, loading,
++}: { candidates: SergeantCandidateWithUser[]; loading: boolean }) {
++  if (loading) {
++    return <div className="text-center py-12 text-stone-500">Checking eligibility...</div>;
++  }
++
++  return (
++    <div className="space-y-4">
++      <div className="ek-panel p-4 bg-green-950/20 border border-green-800/30">
++        <p className="text-sm text-stone-300">
++          Corporals who reach <span className="text-amber-400 font-semibold">40 recent points</span> appear
++          here automatically. They stay on this list even after the recent points cycle resets, and are only
++          removed once they're promoted to Sergeant.
++        </p>
++      </div>
++
++      {candidates.length === 0 ? (
++        <div className="ek-panel p-12 text-center">
++          <ChevronsUp className="w-12 h-12 text-stone-600 mx-auto mb-3" />
++          <p className="text-stone-400">No Corporals currently qualify for Sergeant promotion.</p>
++        </div>
++      ) : (
++        <div className="space-y-2">
++          {candidates.map((c) => (
++            <div key={c.id} className="ek-panel p-4 flex items-center gap-4">
++              {c.user?.roblox_avatar_url ? (
++                <img
++                  src={c.user.roblox_avatar_url}
++                  alt=""
++                  className="w-10 h-10 rounded-full flex-shrink-0"
++                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
++                />
++              ) : (
++                <div className="w-10 h-10 rounded-full bg-stone-700 flex items-center justify-center flex-shrink-0">
++                  <Users className="w-5 h-5 text-stone-400" />
++                </div>
++              )}
++              <div className="flex-1 min-w-0">
++                <p className="text-sm font-semibold text-stone-100 truncate">
++                  {c.user?.roblox_display_name || c.user?.roblox_username || 'Unknown'}
++                </p>
++                <p className="text-xs text-stone-500">
++                  Reached 40 recent points on {new Date(c.qualified_at).toLocaleDateString(undefined, {
++                    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
++                  })}
++                </p>
++              </div>
++              <div className="text-right flex-shrink-0">
++                <p className="text-lg font-bold text-amber-400">{c.currentRecentPoints}</p>
++                <p className="text-[10px] text-stone-500 uppercase">Recent Points Now</p>
++              </div>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/src/pages/Points.tsx b/src/pages/Points.tsx
+index 0f403d0..e7335e4 100644
+--- a/src/pages/Points.tsx
++++ b/src/pages/Points.tsx
+@@ -132,6 +132,13 @@ export function Points() {
+       await supabase.from('activity_log').insert(activities);
+       await loadRecentAwards();
+ 
++      // Check if any recipients just became Sergeant Promotion candidates
++      if (points > 0) {
++        await Promise.all(
++          selectedUsers.map((s) => supabase.rpc('check_sergeant_promotion_eligibility', { p_user_id: s.userId })),
++        );
++      }
++
+       setSuccess(true);
+       setTimeout(() => {
+         setSuccess(false);
+diff --git a/supabase/functions/roblox-oauth/index.ts b/supabase/functions/roblox-oauth/index.ts
+index fd4c29d..8919466 100644
+--- a/supabase/functions/roblox-oauth/index.ts
++++ b/supabase/functions/roblox-oauth/index.ts
+@@ -148,6 +148,15 @@ Deno.serve(async (req: Request) => {
+             updated_at: new Date().toISOString(),
+           })
+           .eq("id", userId);
++
++        // If they've reached Sergeant (rank 5) or above, they're no longer a
++        // Sergeant Promotions candidate - clear any pending candidate row.
++        if (groupRole.rank >= 5) {
++          await supabase
++            .from("sergeant_promotion_candidates")
++            .delete()
++            .eq("user_id", userId);
++        }
+       } else {
+         const { data: newUser, error } = await supabase
+           .from("users")
+diff --git a/supabase/migrations/20260921120000_009_recent_points_4_weeks.sql b/supabase/migrations/20260921120000_009_recent_points_4_weeks.sql
+new file mode 100644
+index 0000000..86d9976
+--- /dev/null
++++ b/supabase/migrations/20260921120000_009_recent_points_4_weeks.sql
+@@ -0,0 +1,19 @@
++/*
++# Recent Points: Change Cycle Length to 4 Weeks
++
++## Changes
++1. `get_current_points_cycle_start()` now uses a 28-day (4-week) cycle instead of
++   14 days (2 weeks). Still anchored to Friday 2026-09-18, so every boundary
++   continues to land on a Friday.
++*/
++
++CREATE OR REPLACE FUNCTION get_current_points_cycle_start()
++RETURNS timestamptz
++LANGUAGE sql
++STABLE
++AS $$
++  SELECT '2026-09-18 00:00:00+00'::timestamptz
++    + floor(
++        extract(epoch FROM (now() - '2026-09-18 00:00:00+00'::timestamptz)) / (28 * 86400)
++      ) * interval '28 days';
++$$;
+diff --git a/supabase/migrations/20260921130000_010_sergeant_promotion_candidates.sql b/supabase/migrations/20260921130000_010_sergeant_promotion_candidates.sql
+new file mode 100644
+index 0000000..d6f51d5
+--- /dev/null
++++ b/supabase/migrations/20260921130000_010_sergeant_promotion_candidates.sql
+@@ -0,0 +1,73 @@
++/*
++# Sergeant Promotion Candidates
++
++## New Table
++`sergeant_promotion_candidates` - tracks Corporals who have reached at least 40
++recent points, for the HR Panel's "Sergeant Promotions" sub-tab. A row is created
++the moment a Corporal first crosses the 40 recent-points threshold, storing when
++that happened (`qualified_at`). The row persists across recent-points resets and
++is only removed once the person is promoted to Sergeant (group_rank >= 5) or
++above, via the app calling delete when that promotion happens, or picked up
++by the eligibility check finding they're no longer a Corporal-or-below.
++
++## Function
++`check_sergeant_promotion_eligibility(p_user_id uuid)` - if the given user is
++currently rank 4 (Corporal) and their recent points are >= 40, inserts a
++candidate row if one doesn't already exist (idempotent). Called from the app
++whenever points are awarded, and as a safety-net sweep when the HR panel loads.
++
++## Security
++- RLS enabled, following the same anon/authenticated pattern used throughout
++  this app (app-layer permission checks control access to the HR panel UI).
++*/
++
++CREATE TABLE IF NOT EXISTS sergeant_promotion_candidates (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
++  qualified_at timestamptz NOT NULL DEFAULT now(),
++  recent_points_at_qualification integer NOT NULL,
++  created_at timestamptz DEFAULT now()
++);
++
++ALTER TABLE sergeant_promotion_candidates ENABLE ROW LEVEL SECURITY;
++
++DROP POLICY IF EXISTS "sergeant_candidates_select_all" ON sergeant_promotion_candidates;
++CREATE POLICY "sergeant_candidates_select_all"
++ON sergeant_promotion_candidates FOR SELECT TO anon, authenticated USING (true);
++
++DROP POLICY IF EXISTS "sergeant_candidates_insert_auth" ON sergeant_promotion_candidates;
++CREATE POLICY "sergeant_candidates_insert_auth"
++ON sergeant_promotion_candidates FOR INSERT TO anon, authenticated WITH CHECK (true);
++
++DROP POLICY IF EXISTS "sergeant_candidates_delete_auth" ON sergeant_promotion_candidates;
++CREATE POLICY "sergeant_candidates_delete_auth"
++ON sergeant_promotion_candidates FOR DELETE TO anon, authenticated USING (true);
++
++CREATE OR REPLACE FUNCTION check_sergeant_promotion_eligibility(p_user_id uuid)
++RETURNS void
++LANGUAGE plpgsql
++SECURITY DEFINER
++SET search_path = public
++AS $$
++DECLARE
++  v_group_rank integer;
++  v_recent_points integer;
++BEGIN
++  SELECT group_rank INTO v_group_rank FROM users WHERE id = p_user_id;
++
++  -- Only Corporals (rank 4) are candidates; anyone else is skipped.
++  IF v_group_rank IS DISTINCT FROM 4 THEN
++    RETURN;
++  END IF;
++
++  SELECT get_user_recent_points(p_user_id) INTO v_recent_points;
++
++  IF v_recent_points >= 40 THEN
++    INSERT INTO sergeant_promotion_candidates (user_id, recent_points_at_qualification)
++    VALUES (p_user_id, v_recent_points)
++    ON CONFLICT (user_id) DO NOTHING;
++  END IF;
++END;
++$$;
++
++CREATE INDEX IF NOT EXISTS idx_sergeant_candidates_qualified_at ON sergeant_promotion_candidates(qualified_at);
+-- 
+2.43.0
+

@@ -137,12 +137,12 @@ export interface PointTransaction {
 }
 
 /**
- * "Recent points" resets every 2 weeks, anchored to Friday 2026-09-18 (the last
- * reset at the time this was added). Boundaries repeat every 14 days from there,
+ * "Recent points" resets every 4 weeks, anchored to Friday 2026-09-18 (the last
+ * reset at the time this was added). Boundaries repeat every 28 days from there,
  * matching the get_current_points_cycle_start SQL function used server-side.
  */
 export const POINTS_CYCLE_ANCHOR = new Date('2026-09-18T00:00:00Z');
-export const POINTS_CYCLE_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
+export const POINTS_CYCLE_LENGTH_MS = 28 * 24 * 60 * 60 * 1000;
 
 export function getCurrentPointsCycleStart(now: Date = new Date()): Date {
   const elapsed = now.getTime() - POINTS_CYCLE_ANCHOR.getTime();
@@ -234,5 +234,13 @@ export interface ActivityLog {
   user_id: string;
   event_type: string;
   event_data: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SergeantPromotionCandidate {
+  id: string;
+  user_id: string;
+  qualified_at: string;
+  recent_points_at_qualification: number;
   created_at: string;
 }

@@ -31,11 +31,11 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/profile', label: 'My Profile', icon: Shield, show: true },
     { to: '/members', label: 'Member Profiles', icon: Users, show: true },
     { to: '/divisions', label: 'Divisions', icon: Swords, show: true },
-    { to: '/damage-calculator', label: 'Damage Calculator', icon: Calculator, show: true },
     { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: onDivisionsTab && perms.can_promote },
+    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
+    { to: '/damage-calculator', label: 'Damage Calculator', icon: Calculator, show: true },
     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
-    { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
     { to: '/admin', label: 'Admin Panel', icon: ShieldAlert, permission: 'is_owner', show: perms.is_owner },
   ];
 

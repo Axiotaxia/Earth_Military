@@ -132,6 +132,13 @@ export function Points() {
       await supabase.from('activity_log').insert(activities);
       await loadRecentAwards();
 
+      // Check if any recipients just became Sergeant Promotion candidates
+      if (points > 0) {
+        await Promise.all(
+          selectedUsers.map((s) => supabase.rpc('check_sergeant_promotion_eligibility', { p_user_id: s.userId })),
+        );
+      }
+
       setSuccess(true);
       setTimeout(() => {
         setSuccess(false);

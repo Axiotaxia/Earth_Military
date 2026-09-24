@@ -148,6 +148,15 @@ Deno.serve(async (req: Request) => {
             updated_at: new Date().toISOString(),
           })
           .eq("id", userId);
+
+        // If they've reached Sergeant (rank 5) or above, they're no longer a
+        // Sergeant Promotions candidate - clear any pending candidate row.
+        if (groupRole.rank >= 5) {
+          await supabase
+            .from("sergeant_promotion_candidates")
+            .delete()
+            .eq("user_id", userId);
+        }
       } else {
         const { data: newUser, error } = await supabase
           .from("users")
