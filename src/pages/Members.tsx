@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
+  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS, PointTransaction,
 } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import {
   Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
-  Save, Loader2, Check, UserMinus,
+  Save, Loader2, Check, UserMinus, History,
 } from 'lucide-react';
 
 interface MemberWithDetails extends DbUser {
@@ -296,6 +296,33 @@ function MemberModal({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transactions, setTransactions] = useState<(PointTransaction & { awarded_by_user: DbUser | null })[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setTransactionsLoading(true);
+      const { data: txns } = await supabase
+        .from('point_transactions')
+        .select('*')
+        .eq('user_id', member.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const awarderIds = Array.from(new Set((txns || []).map((t) => t.awarded_by).filter((id): id is string => !!id)));
+      let awarderMap = new Map<string, DbUser>();
+      if (awarderIds.length > 0) {
+        const { data: awarders } = await supabase.from('users').select('*').in('id', awarderIds);
+        awarderMap = new Map((awarders || []).map((a) => [a.id, a]));
+      }
+
+      setTransactions((txns || []).map((t) => ({
+        ...t,
+        awarded_by_user: t.awarded_by ? awarderMap.get(t.awarded_by) || null : null,
+      })));
+      setTransactionsLoading(false);
+    })();
+  }, [member.id]);
 
   const ranksForDivision = allRanks.filter((r) => r.division_id === divisionId);
 
@@ -381,6 +408,36 @@ function MemberModal({
           <Row icon={Compass} label="Selected Path" value={member.selected_path || 'Not set'} />
           <Row icon={Shield} label="Main Sub" value={member.main_sub || 'Not set'} />
           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
+        </div>
+
+        <div className="mt-5 pt-5 border-t border-stone-700">
+          <h4 className="ek-label mb-2 flex items-center gap-1.5">
+            <History className="w-3.5 h-3.5" /> Points History
+          </h4>
+          {transactionsLoading ? (
+            <p className="text-stone-600 text-sm text-center py-4">Loading...</p>
+          ) : transactions.length === 0 ? (
+            <p className="text-stone-600 text-sm text-center py-4">No point transactions yet.</p>
+          ) : (
+            <div className="space-y-1.5 max-h-56 overflow-y-auto">
+              {transactions.map((t) => (
+                <div key={t.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
+                  <div className="min-w-0">
+                    <p className="text-sm text-stone-200 truncate">{t.reason}</p>
+                    <p className="text-xs text-stone-500">
+                      {new Date(t.created_at).toLocaleDateString()}
+                      {t.awarded_by_user && (
+                        <> &middot; by {t.awarded_by_user.roblox_display_name || t.awarded_by_user.roblox_username}</>
+                      )}
+                    </p>
+                  </div>
+                  <span className={`text-sm font-bold flex-shrink-0 ml-2 ${t.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {t.points >= 0 ? '+' : ''}{t.points}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {hasManagePermission && !canManage && (

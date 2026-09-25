@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { usePermissions } from '@/lib/permissions';
+import { SITE_VERSION, SITE_VERSION_DATE } from '@/lib/version';
 import {
   Shield, LayoutDashboard, Users, Swords, Award, BarChart3,
   Settings, LogOut, Menu, X, Crown, ChevronRight, ShieldAlert, Calculator,
@@ -110,6 +111,9 @@ export function Layout({ children }: { children: ReactNode }) {
           <button onClick={handleLogout} className="ek-btn ek-btn-ghost w-full text-sm flex items-center justify-center gap-2">
             <LogOut className="w-4 h-4" /> Sign Out
           </button>
+          <p className="text-[10px] text-stone-600 text-center mt-2" title={`Last updated ${SITE_VERSION_DATE}`}>
+            {SITE_VERSION}
+          </p>
         </div>
       </aside>
 

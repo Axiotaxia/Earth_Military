@@ -4,7 +4,7 @@ import {
 } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
 import {
-  BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp,
+  BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp, RefreshCw, Loader2,
 } from 'lucide-react';
 
 type Period = 7 | 14 | 30;
@@ -237,7 +237,7 @@ export function HRPanel() {
       </div>
 
       {tab === 'sergeant-promotions' ? (
-        <SergeantPromotionsTab candidates={candidates} loading={candidatesLoading} />
+        <SergeantPromotionsTab candidates={candidates} loading={candidatesLoading} onRefresh={loadCandidates} />
       ) : loading ? (
         <div className="text-center py-12 text-stone-500">Loading HR analytics...</div>
       ) : (
@@ -427,11 +427,49 @@ function ActivityRow({ name, count }: { name: string; count: number }) {
 }
 
 function SergeantPromotionsTab({
-  candidates, loading,
-}: { candidates: SergeantCandidateWithUser[]; loading: boolean }) {
-  if (loading) {
-    return <div className="text-center py-12 text-stone-500">Checking eligibility...</div>;
-  }
+  candidates, loading, onRefresh,
+}: { candidates: SergeantCandidateWithUser[]; loading: boolean; onRefresh: () => Promise<void> }) {
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  const handleCheckPromotions = async () => {
+    setChecking(true);
+    setCheckResult(null);
+    setCheckError(null);
+
+    try {
+      const funcUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-sergeant-promotions`;
+      const resp = await fetch(funcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || 'Check failed');
+      }
+
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+
+      const promotedCount = data.promoted?.length || 0;
+      setCheckResult(
+        promotedCount === 0
+          ? `Checked ${data.checked} candidate${data.checked !== 1 ? 's' : ''} — no promotions found.`
+          : `${promotedCount} member${promotedCount !== 1 ? 's' : ''} promoted to Sergeant and removed from this list.`,
+      );
+
+      await onRefresh();
+    } catch (e) {
+      setCheckError(e instanceof Error ? e.message : 'Something went wrong checking promotions.');
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -443,7 +481,22 @@ function SergeantPromotionsTab({
         </p>
       </div>
 
-      {candidates.length === 0 ? (
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <button
+          onClick={handleCheckPromotions}
+          disabled={checking || candidates.length === 0}
+          className="ek-btn ek-btn-primary text-sm flex items-center gap-2"
+        >
+          {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {checking ? 'Checking Roblox ranks...' : 'Check for Promotions'}
+        </button>
+        {checkResult && <p className="text-sm text-green-400">{checkResult}</p>}
+        {checkError && <p className="text-sm text-red-400">{checkError}</p>}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-stone-500">Checking eligibility...</div>
+      ) : candidates.length === 0 ? (
         <div className="ek-panel p-12 text-center">
           <ChevronsUp className="w-12 h-12 text-stone-600 mx-auto mb-3" />
           <p className="text-stone-400">No Corporals currently qualify for Sergeant promotion.</p>

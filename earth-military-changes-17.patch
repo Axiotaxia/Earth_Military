@@ -1,0 +1,370 @@
+From e2f4e04714d06366513d2460c01268e6f590b58d Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 25 Sep 2026 09:58:11 +0000
+Subject: [PATCH] Add version counter, Sergeant Promotions update button,
+ member points history
+
+- New sidebar version tag (v18) so you can always confirm whether a deploy actually picked up the latest changes
+- Sergeant Promotions tab gets a 'Check for Promotions' button, backed by a new check-sergeant-promotions edge function that queries each candidate's live Roblox group rank (not just the cached DB value) and removes anyone who has actually been promoted, even if they haven't logged back into the site
+- Member profile modal (Members page) now shows that person's points history (last 20 transactions, with who awarded them), not just their totals
+---
+ src/components/Layout.tsx                     |   4 +
+ src/lib/version.ts                            |   7 ++
+ src/pages/HRPanel.tsx                         |  69 +++++++++--
+ src/pages/Members.tsx                         |  61 ++++++++-
+ .../check-sergeant-promotions/index.ts        | 116 ++++++++++++++++++
+ 5 files changed, 247 insertions(+), 10 deletions(-)
+ create mode 100644 src/lib/version.ts
+ create mode 100644 supabase/functions/check-sergeant-promotions/index.ts
+
+diff --git a/src/components/Layout.tsx b/src/components/Layout.tsx
+index ac8da51..fd63b6e 100644
+--- a/src/components/Layout.tsx
++++ b/src/components/Layout.tsx
+@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
+ import { Link, useNavigate, useLocation } from 'react-router-dom';
+ import { useAuth } from '@/context/AuthContext';
+ import { usePermissions } from '@/lib/permissions';
++import { SITE_VERSION, SITE_VERSION_DATE } from '@/lib/version';
+ import {
+   Shield, LayoutDashboard, Users, Swords, Award, BarChart3,
+   Settings, LogOut, Menu, X, Crown, ChevronRight, ShieldAlert, Calculator,
+@@ -110,6 +111,9 @@ export function Layout({ children }: { children: ReactNode }) {
+           <button onClick={handleLogout} className="ek-btn ek-btn-ghost w-full text-sm flex items-center justify-center gap-2">
+             <LogOut className="w-4 h-4" /> Sign Out
+           </button>
++          <p className="text-[10px] text-stone-600 text-center mt-2" title={`Last updated ${SITE_VERSION_DATE}`}>
++            {SITE_VERSION}
++          </p>
+         </div>
+       </aside>
+ 
+diff --git a/src/lib/version.ts b/src/lib/version.ts
+new file mode 100644
+index 0000000..6d8d4b6
+--- /dev/null
++++ b/src/lib/version.ts
+@@ -0,0 +1,7 @@
++/**
++ * Bumped on every set of changes shipped, so you can confirm at a glance
++ * whether the live site has actually picked up the latest deploy. Shown in
++ * the sidebar footer.
++ */
++export const SITE_VERSION = 'v18';
++export const SITE_VERSION_DATE = '2026-09-21';
+diff --git a/src/pages/HRPanel.tsx b/src/pages/HRPanel.tsx
+index 812d06a..2a28467 100644
+--- a/src/pages/HRPanel.tsx
++++ b/src/pages/HRPanel.tsx
+@@ -4,7 +4,7 @@ import {
+ } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
+ import {
+-  BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp,
++  BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp, RefreshCw, Loader2,
+ } from 'lucide-react';
+ 
+ type Period = 7 | 14 | 30;
+@@ -237,7 +237,7 @@ export function HRPanel() {
+       </div>
+ 
+       {tab === 'sergeant-promotions' ? (
+-        <SergeantPromotionsTab candidates={candidates} loading={candidatesLoading} />
++        <SergeantPromotionsTab candidates={candidates} loading={candidatesLoading} onRefresh={loadCandidates} />
+       ) : loading ? (
+         <div className="text-center py-12 text-stone-500">Loading HR analytics...</div>
+       ) : (
+@@ -427,11 +427,49 @@ function ActivityRow({ name, count }: { name: string; count: number }) {
+ }
+ 
+ function SergeantPromotionsTab({
+-  candidates, loading,
+-}: { candidates: SergeantCandidateWithUser[]; loading: boolean }) {
+-  if (loading) {
+-    return <div className="text-center py-12 text-stone-500">Checking eligibility...</div>;
+-  }
++  candidates, loading, onRefresh,
++}: { candidates: SergeantCandidateWithUser[]; loading: boolean; onRefresh: () => Promise<void> }) {
++  const [checking, setChecking] = useState(false);
++  const [checkResult, setCheckResult] = useState<string | null>(null);
++  const [checkError, setCheckError] = useState<string | null>(null);
++
++  const handleCheckPromotions = async () => {
++    setChecking(true);
++    setCheckResult(null);
++    setCheckError(null);
++
++    try {
++      const funcUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-sergeant-promotions`;
++      const resp = await fetch(funcUrl, {
++        method: 'POST',
++        headers: {
++          'Content-Type': 'application/json',
++          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
++        },
++      });
++
++      if (!resp.ok) {
++        const text = await resp.text();
++        throw new Error(text || 'Check failed');
++      }
++
++      const data = await resp.json();
++      if (data.error) throw new Error(data.error);
++
++      const promotedCount = data.promoted?.length || 0;
++      setCheckResult(
++        promotedCount === 0
++          ? `Checked ${data.checked} candidate${data.checked !== 1 ? 's' : ''} — no promotions found.`
++          : `${promotedCount} member${promotedCount !== 1 ? 's' : ''} promoted to Sergeant and removed from this list.`,
++      );
++
++      await onRefresh();
++    } catch (e) {
++      setCheckError(e instanceof Error ? e.message : 'Something went wrong checking promotions.');
++    } finally {
++      setChecking(false);
++    }
++  };
+ 
+   return (
+     <div className="space-y-4">
+@@ -443,7 +481,22 @@ function SergeantPromotionsTab({
+         </p>
+       </div>
+ 
+-      {candidates.length === 0 ? (
++      <div className="flex items-center justify-between flex-wrap gap-2">
++        <button
++          onClick={handleCheckPromotions}
++          disabled={checking || candidates.length === 0}
++          className="ek-btn ek-btn-primary text-sm flex items-center gap-2"
++        >
++          {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
++          {checking ? 'Checking Roblox ranks...' : 'Check for Promotions'}
++        </button>
++        {checkResult && <p className="text-sm text-green-400">{checkResult}</p>}
++        {checkError && <p className="text-sm text-red-400">{checkError}</p>}
++      </div>
++
++      {loading ? (
++        <div className="text-center py-12 text-stone-500">Checking eligibility...</div>
++      ) : candidates.length === 0 ? (
+         <div className="ek-panel p-12 text-center">
+           <ChevronsUp className="w-12 h-12 text-stone-600 mx-auto mb-3" />
+           <p className="text-stone-400">No Corporals currently qualify for Sergeant promotion.</p>
+diff --git a/src/pages/Members.tsx b/src/pages/Members.tsx
+index 1f7416c..e5e1de7 100644
+--- a/src/pages/Members.tsx
++++ b/src/pages/Members.tsx
+@@ -1,12 +1,12 @@
+ import { useEffect, useMemo, useState } from 'react';
+ import {
+-  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS,
++  supabase, DbUser, Division, DivisionRank, ROBLOX_RANKS, TIMEZONES, PATHS, SUBS, PointTransaction,
+ } from '@/lib/supabase';
+ import { usePermissions } from '@/lib/permissions';
+ import { useAuth } from '@/context/AuthContext';
+ import {
+   Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
+-  Save, Loader2, Check, UserMinus,
++  Save, Loader2, Check, UserMinus, History,
+ } from 'lucide-react';
+ 
+ interface MemberWithDetails extends DbUser {
+@@ -296,6 +296,33 @@ function MemberModal({
+   const [saving, setSaving] = useState(false);
+   const [saved, setSaved] = useState(false);
+   const [error, setError] = useState<string | null>(null);
++  const [transactions, setTransactions] = useState<(PointTransaction & { awarded_by_user: DbUser | null })[]>([]);
++  const [transactionsLoading, setTransactionsLoading] = useState(true);
++
++  useEffect(() => {
++    (async () => {
++      setTransactionsLoading(true);
++      const { data: txns } = await supabase
++        .from('point_transactions')
++        .select('*')
++        .eq('user_id', member.id)
++        .order('created_at', { ascending: false })
++        .limit(20);
++
++      const awarderIds = Array.from(new Set((txns || []).map((t) => t.awarded_by).filter((id): id is string => !!id)));
++      let awarderMap = new Map<string, DbUser>();
++      if (awarderIds.length > 0) {
++        const { data: awarders } = await supabase.from('users').select('*').in('id', awarderIds);
++        awarderMap = new Map((awarders || []).map((a) => [a.id, a]));
++      }
++
++      setTransactions((txns || []).map((t) => ({
++        ...t,
++        awarded_by_user: t.awarded_by ? awarderMap.get(t.awarded_by) || null : null,
++      })));
++      setTransactionsLoading(false);
++    })();
++  }, [member.id]);
+ 
+   const ranksForDivision = allRanks.filter((r) => r.division_id === divisionId);
+ 
+@@ -383,6 +410,36 @@ function MemberModal({
+           <Row icon={Users} label="Division" value={member.division_name || 'Unassigned'} />
+         </div>
+ 
++        <div className="mt-5 pt-5 border-t border-stone-700">
++          <h4 className="ek-label mb-2 flex items-center gap-1.5">
++            <History className="w-3.5 h-3.5" /> Points History
++          </h4>
++          {transactionsLoading ? (
++            <p className="text-stone-600 text-sm text-center py-4">Loading...</p>
++          ) : transactions.length === 0 ? (
++            <p className="text-stone-600 text-sm text-center py-4">No point transactions yet.</p>
++          ) : (
++            <div className="space-y-1.5 max-h-56 overflow-y-auto">
++              {transactions.map((t) => (
++                <div key={t.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
++                  <div className="min-w-0">
++                    <p className="text-sm text-stone-200 truncate">{t.reason}</p>
++                    <p className="text-xs text-stone-500">
++                      {new Date(t.created_at).toLocaleDateString()}
++                      {t.awarded_by_user && (
++                        <> &middot; by {t.awarded_by_user.roblox_display_name || t.awarded_by_user.roblox_username}</>
++                      )}
++                    </p>
++                  </div>
++                  <span className={`text-sm font-bold flex-shrink-0 ml-2 ${t.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>
++                    {t.points >= 0 ? '+' : ''}{t.points}
++                  </span>
++                </div>
++              ))}
++            </div>
++          )}
++        </div>
++
+         {hasManagePermission && !canManage && (
+           <p className="mt-5 pt-5 border-t border-stone-700 text-xs text-stone-500">
+             You can't assign this member to a division since their Roblox group rank is the same as or higher than yours.
+diff --git a/supabase/functions/check-sergeant-promotions/index.ts b/supabase/functions/check-sergeant-promotions/index.ts
+new file mode 100644
+index 0000000..7b4a65b
+--- /dev/null
++++ b/supabase/functions/check-sergeant-promotions/index.ts
+@@ -0,0 +1,116 @@
++import { createClient } from "npm:@supabase/supabase-js@2.57.4";
++
++const corsHeaders = {
++  "Access-Control-Allow-Origin": "*",
++  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
++  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
++};
++
++const GROUP_ID = 592750791;
++const SERGEANT_RANK = 5;
++
++interface RobloxGroupRole {
++  rank: number;
++  name: string;
++}
++
++async function getUserGroupRank(robloxUserId: number): Promise<RobloxGroupRole> {
++  const resp = await fetch(
++    `https://groups.roblox.com/v2/users/${robloxUserId}/groups/${GROUP_ID}/roles`,
++    { headers: { "Content-Type": "application/json" } }
++  );
++
++  if (!resp.ok) {
++    const resp2 = await fetch(
++      `https://groups.roblox.com/v1/users/${robloxUserId}/groups/roles`,
++      { headers: { "Content-Type": "application/json" } }
++    );
++    if (!resp2.ok) return { rank: 0, name: "Guest" };
++    const data2 = await resp2.json();
++    const groupData = data2.data?.find(
++      (g: { group: { id: number } }) => g.group.id === GROUP_ID
++    );
++    if (!groupData) return { rank: 0, name: "Guest" };
++    return { rank: groupData.role?.rank || 0, name: groupData.role?.name || "Guest" };
++  }
++
++  const data = await resp.json();
++  return { rank: data.rank || 0, name: data.name || "Guest" };
++}
++
++async function getSupabaseClient() {
++  const url = Deno.env.get("SUPABASE_URL")!;
++  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
++  return createClient(url, serviceKey);
++}
++
++Deno.serve(async (req: Request) => {
++  if (req.method === "OPTIONS") {
++    return new Response(null, { headers: corsHeaders });
++  }
++
++  try {
++    const supabase = await getSupabaseClient();
++
++    // Load current candidates and their linked users
++    const { data: candidates, error: candidatesError } = await supabase
++      .from("sergeant_promotion_candidates")
++      .select("id, user_id");
++
++    if (candidatesError) throw candidatesError;
++    if (!candidates || candidates.length === 0) {
++      return new Response(
++        JSON.stringify({ checked: 0, promoted: [] }),
++        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
++      );
++    }
++
++    const userIds = candidates.map((c) => c.user_id);
++    const { data: users, error: usersError } = await supabase
++      .from("users")
++      .select("id, roblox_user_id, group_rank, group_rank_name")
++      .in("id", userIds);
++
++    if (usersError) throw usersError;
++
++    const promoted: { user_id: string; roblox_username: string | null; new_rank_name: string }[] = [];
++
++    for (const user of users || []) {
++      const role = await getUserGroupRank(user.roblox_user_id);
++
++      if (role.rank !== user.group_rank) {
++        await supabase
++          .from("users")
++          .update({
++            group_rank: role.rank,
++            group_rank_name: role.name,
++            updated_at: new Date().toISOString(),
++          })
++          .eq("id", user.id);
++      }
++
++      if (role.rank >= SERGEANT_RANK) {
++        await supabase
++          .from("sergeant_promotion_candidates")
++          .delete()
++          .eq("user_id", user.id);
++
++        promoted.push({
++          user_id: user.id,
++          roblox_username: null,
++          new_rank_name: role.name,
++        });
++      }
++    }
++
++    return new Response(
++      JSON.stringify({ checked: (users || []).length, promoted }),
++      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
++    );
++  } catch (error) {
++    return new Response(
++      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
++      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
++    );
++  }
++});
+-- 
+2.43.0
+
