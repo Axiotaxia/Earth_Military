@@ -1,0 +1,19 @@
+{
+  "name": "earth-military-discord-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord bot for Earth Military's Host Events system. Posts/edits Discord messages and reports reactions/button clicks back to the website's Supabase backend. All event logic and state lives on the website; this bot is a thin messenger.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "express": "^4.21.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

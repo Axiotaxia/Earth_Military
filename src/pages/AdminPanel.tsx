@@ -13,6 +13,7 @@ const PERM_FIELDS: { key: keyof Omit<GroupRankPermissions, 'id' | 'group_rank' |
   { key: 'can_view_hr_panel', label: 'Can view HR panel' },
   { key: 'can_manage_members', label: 'Can manage members' },
   { key: 'can_edit_point_types', label: 'Can edit point event types' },
+  { key: 'can_host_events', label: 'Can host events' },
 ];
 
 type PermKey = typeof PERM_FIELDS[number]['key'];
@@ -61,6 +62,7 @@ export function AdminPanel() {
         can_view_hr_panel: existing?.can_view_hr_panel || false,
         can_manage_members: existing?.can_manage_members || false,
         can_edit_point_types: existing?.can_edit_point_types || false,
+        can_host_events: existing?.can_host_events || false,
         created_at: existing?.created_at || '',
         updated_at: existing?.updated_at || '',
         [key]: !(existing?.[key] || false),
@@ -85,6 +87,7 @@ export function AdminPanel() {
         can_view_hr_panel: current.can_view_hr_panel,
         can_manage_members: current.can_manage_members,
         can_edit_point_types: current.can_edit_point_types,
+        can_host_events: current.can_host_events,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'group_rank' });
 

@@ -88,6 +88,8 @@ export interface DbUser {
   timezone: string | null;
   selected_path: string | null;
   main_sub: string | null;
+  discord_id: string | null;
+  discord_username: string | null;
   onboarded: boolean;
   created_at: string;
   updated_at: string;
@@ -115,6 +117,7 @@ export interface DivisionRank {
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
   can_edit_point_types: boolean;
+  can_host_events: boolean;
   created_at: string;
 }
 
@@ -164,6 +167,7 @@ export interface UserPermissions {
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
   can_edit_point_types: boolean;
+  can_host_events: boolean;
   is_owner: boolean;
 }
 
@@ -189,6 +193,7 @@ export interface GroupRankPermissions {
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
   can_edit_point_types: boolean;
+  can_host_events: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -243,4 +248,48 @@ export interface SergeantPromotionCandidate {
   qualified_at: string;
   recent_points_at_qualification: number;
   created_at: string;
+}
+
+export type EventType = 'corporal_exam' | 'private_exam' | 'soldier_exam' | 'double_exam' | 'training';
+export type EventStatus = 'draft' | 'posted' | 'ready' | 'started' | 'concluded' | 'cancelled';
+
+export interface HostedEvent {
+  id: string;
+  event_type: EventType;
+  status: EventStatus;
+  host_user_id: string;
+  host_discord_id: string | null;
+  scheduled_for: string;
+  decided_activities: Record<string, boolean> | null;
+  poll_channel_id: string | null;
+  poll_message_id: string | null;
+  cohost_channel_id: string | null;
+  cohost_message_id: string | null;
+  start_channel_id: string | null;
+  start_message_id: string | null;
+  conclude_channel_id: string | null;
+  conclude_message_id: string | null;
+  created_at: string;
+  posted_at: string | null;
+  started_at: string | null;
+  concluded_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface EventCohostSlot {
+  id: string;
+  event_id: string;
+  slot_index: number;
+  label: string | null;
+  claimed_by_discord_id: string | null;
+  claimed_by_discord_username: string | null;
+  claimed_by_roblox_user_id: string | null;
+  claimed_at: string | null;
+}
+
+export interface DiscordMemberResult {
+  discordId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
 }

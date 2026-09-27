@@ -11,6 +11,7 @@ export interface EffectivePermissions {
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
   can_edit_point_types: boolean;
+  can_host_events: boolean;
 }
 
 const PERMISSION_KEYS: (keyof EffectivePermissions)[] = [
@@ -21,6 +22,7 @@ const PERMISSION_KEYS: (keyof EffectivePermissions)[] = [
   'can_view_hr_panel',
   'can_manage_members',
   'can_edit_point_types',
+  'can_host_events',
 ];
 
 const NO_PERMISSIONS: EffectivePermissions = {
@@ -31,6 +33,7 @@ const NO_PERMISSIONS: EffectivePermissions = {
   can_view_hr_panel: false,
   can_manage_members: false,
   can_edit_point_types: false,
+  can_host_events: false,
 };
 
 interface AuthUser extends DbUser {
@@ -122,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           can_view_hr_panel: true,
           can_manage_members: true,
           can_edit_point_types: true,
+          can_host_events: true,
         }
       : PERMISSION_KEYS.reduce((acc, key) => {
           acc[key] = !!(perms?.[key] || groupPerms?.[key] || divisionRank?.[key]);

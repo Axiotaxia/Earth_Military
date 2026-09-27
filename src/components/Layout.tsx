@@ -5,7 +5,7 @@ import { usePermissions } from '@/lib/permissions';
 import { SITE_VERSION, SITE_VERSION_DATE } from '@/lib/version';
 import {
   Shield, LayoutDashboard, Users, Swords, Award, BarChart3,
-  Settings, LogOut, Menu, X, Crown, ChevronRight, ShieldAlert, Calculator,
+  Settings, LogOut, Menu, X, Crown, ChevronRight, ShieldAlert, Calculator, CalendarClock,
 } from 'lucide-react';
 
 interface NavLink {
@@ -35,6 +35,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/promotions', label: 'Promotions', icon: ChevronRight, permission: 'can_promote', show: onDivisionsTab && perms.can_promote },
     { to: '/division-ranks', label: 'Division Ranks', icon: Settings, permission: 'can_create_ranks', show: onDivisionsTab && perms.can_create_ranks },
     { to: '/damage-calculator', label: 'Damage Calculator', icon: Calculator, show: true },
+    { to: '/host-events', label: 'Host Events', icon: CalendarClock, permission: 'can_host_events', show: perms.can_host_events },
     { to: '/points', label: 'Military Points', icon: Award, permission: 'can_award_points', show: perms.can_award_points },
     { to: '/hr-panel', label: 'HR Panel', icon: BarChart3, permission: 'can_view_hr_panel', show: perms.can_view_hr_panel },
     { to: '/admin', label: 'Admin Panel', icon: ShieldAlert, permission: 'is_owner', show: perms.is_owner },

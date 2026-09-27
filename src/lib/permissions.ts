@@ -8,6 +8,7 @@ export interface ResolvedPermissions {
   can_view_hr_panel: boolean;
   can_manage_members: boolean;
   can_edit_point_types: boolean;
+  can_host_events: boolean;
   is_owner: boolean;
 }
 
@@ -19,6 +20,7 @@ const NO_PERMISSIONS: ResolvedPermissions = {
   can_view_hr_panel: false,
   can_manage_members: false,
   can_edit_point_types: false,
+  can_host_events: false,
   is_owner: false,
 };
 
