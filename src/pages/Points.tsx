@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   Award, Search, X, Loader2, Check, Users, Plus, Trash2, Send, Settings, Save, ArrowLeft,
 } from 'lucide-react';
+import { formatPersonName } from '@/lib/names';
 
 interface MassPointEntry {
   userId: string;
@@ -260,7 +261,7 @@ export function Points() {
                 ) : (
                   <div className="w-7 h-7 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-3.5 h-3.5 text-stone-400" /></div>
                 )}
-                <span className="text-sm text-stone-200 flex-1 text-left">{u.roblox_display_name || u.roblox_username}</span>
+                <span className="text-sm text-stone-200 flex-1 text-left">{formatPersonName(u.roblox_display_name, u.roblox_username)}</span>
                 <span className="text-xs text-stone-500">{u.group_rank_name}</span>
               </button>
             );
@@ -310,12 +311,12 @@ export function Points() {
               <div key={i} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
                 <div>
                   <p className="text-sm text-stone-200">
-                    {a.recipient?.roblox_display_name || a.recipient?.roblox_username || 'Unknown'}
+                    {formatPersonName(a.recipient?.roblox_display_name, a.recipient?.roblox_username)}
                     <span className="text-stone-500 font-normal"> &middot; {a.reason}</span>
                   </p>
                   <p className="text-xs text-stone-500">
                     {new Date(a.created_at).toLocaleDateString()}
-                    {a.awarder && <> &middot; given by {a.awarder.roblox_display_name || a.awarder.roblox_username}</>}
+                    {a.awarder && <> &middot; given by {formatPersonName(a.awarder.roblox_display_name, a.awarder.roblox_username)}</>}
                   </p>
                 </div>
                 <span className={`text-sm font-bold ${a.points >= 0 ? 'text-green-400' : 'text-red-400'}`}>

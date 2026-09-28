@@ -3,6 +3,8 @@ import { supabase, DiscordMemberResult, HostedEvent, EventCohostSlot } from '@/l
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import { DiscordMemberPicker } from '@/components/DiscordMemberPicker';
+import { callHostEvents } from '@/lib/hostEventsApi';
+import { formatPersonName } from '@/lib/names';
 import {
   Swords, Calendar, Loader2, Check, Users, ShieldAlert, ArrowLeft, RefreshCw, Trophy,
 } from 'lucide-react';
@@ -96,12 +98,14 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
   const needsDiscordId = !user.discord_id;
 
   const handleSelectSelf = async (member: DiscordMemberResult) => {
-    setSelectedDiscordMember(member);
-    await supabase
-      .from('users')
-      .update({ discord_id: member.discordId, discord_username: member.username })
-      .eq('id', user.id);
-    await refreshUser();
+    setError(null);
+    try {
+      await callHostEvents('set-discord-identity', { discordId: member.discordId, username: member.username });
+      setSelectedDiscordMember(member);
+      await refreshUser();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not verify that Discord account.');
+    }
   };
 
   const handleCreate = async () => {
@@ -111,8 +115,7 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
       return;
     }
 
-    const hostDiscordId = user.discord_id || selectedDiscordMember?.discordId;
-    if (!hostDiscordId) {
+    if (!user.discord_id && !selectedDiscordMember) {
       setError('Please identify yourself as a Discord member first.');
       return;
     }
@@ -124,23 +127,9 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
     const scheduledFor = new Date(Date.now() + amount * multiplier);
 
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-double-exam`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          hostUserId: user.id,
-          hostDiscordId,
-          scheduledFor: scheduledFor.toISOString(),
-        }),
+      const data = await callHostEvents<{ eventId: string }>('create-double-exam', {
+        scheduledFor: scheduledFor.toISOString(),
       });
-
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || 'Failed to create event.');
-
       onCreated(data.eventId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.');
@@ -164,7 +153,9 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
           <p className="text-xs text-stone-500 mb-2">
             We don't have your Discord ID on file yet. Search for yourself below so the poll can mention you as host.
           </p>
-          <DiscordMemberPicker placeholder="Search your Discord username..." onSelect={handleSelectSelf} />
+          <DiscordMemberPicker placeholder="Search your Discord name or username..." onSelect={handleSelectSelf} />
+          {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+          <p className="text-xs text-stone-600 mt-2">We check with Bloxlink that the account you pick is linked to your Roblox account.</p>
         </div>
       )}
 
@@ -222,11 +213,7 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
     setSlots(slotData || []);
 
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-vote-counts?eventId=${eventId}`;
-      const resp = await fetch(url, {
-        headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      });
-      if (resp.ok) setVoteCounts(await resp.json());
+      setVoteCounts(await callHostEvents<{ slot_1: number; slot_2: number }>('vote-counts', { eventId }));
     } catch {
       // Non-critical - vote counts just won't update this refresh
     }
@@ -294,7 +281,7 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
               <span className="text-sm text-stone-300">{slot.label}</span>
               {slot.claimed_by_discord_id ? (
                 <span className="text-sm text-green-400 flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5" /> {slot.claimed_by_discord_username}
+                  <Check className="w-3.5 h-3.5" /> {formatPersonName(slot.claimed_by_discord_username, null)}
                 </span>
               ) : (
                 <span className="text-xs text-stone-500">Open</span>

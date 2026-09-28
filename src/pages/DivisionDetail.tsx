@@ -9,6 +9,7 @@ import {
   Swords, Users, Shield, ArrowLeft, Settings, Trash2, Save, Loader2, X,
   Image as ImageIcon, Activity, Award, UserMinus,
 } from 'lucide-react';
+import { formatPersonName } from '@/lib/names';
 
 interface EnrichedMember extends DivisionMember {
   user: DbUser | null;
@@ -244,7 +245,7 @@ export function DivisionDetail() {
                     <div className="w-8 h-8 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-4 h-4 text-stone-400" /></div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-stone-200 truncate">{m.user?.roblox_display_name || m.user?.roblox_username || 'Unknown'}</p>
+                    <p className="text-sm text-stone-200 truncate">{formatPersonName(m.user?.roblox_display_name, m.user?.roblox_username)}</p>
                     {m.rank && <p className="text-xs text-amber-500">{m.rank.name}</p>}
                   </div>
                   {canManageMember(m) && (
@@ -270,7 +271,7 @@ export function DivisionDetail() {
                   <Award className="w-4 h-4 text-amber-500 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-stone-200 truncate">
-                      {a.user?.roblox_display_name || a.user?.roblox_username || 'Unknown'}
+                      {formatPersonName(a.user?.roblox_display_name, a.user?.roblox_username)}
                       <span className="text-stone-500"> &middot; {formatEvent(a)}</span>
                     </p>
                   </div>
@@ -318,7 +319,7 @@ function MemberChip({ member }: { member: EnrichedMember }) {
       ) : (
         <div className="w-7 h-7 rounded-full bg-stone-700 flex items-center justify-center flex-shrink-0"><Users className="w-3.5 h-3.5 text-stone-400" /></div>
       )}
-      <span className="text-sm text-stone-200 truncate">{member.user?.roblox_display_name || member.user?.roblox_username || 'Unknown'}</span>
+      <span className="text-sm text-stone-200 truncate">{formatPersonName(member.user?.roblox_display_name, member.user?.roblox_username)}</span>
     </div>
   );
 }

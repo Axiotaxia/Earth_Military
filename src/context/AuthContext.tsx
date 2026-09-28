@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { setSessionToken } from '@/lib/session';
 import {
   supabase, ROBLOX_CLIENT_ID, OWNER_ROBLOX_ID, DbUser, UserPermissions,
 } from '@/lib/supabase';
@@ -200,6 +201,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.error) throw new Error(data.error);
 
       localStorage.setItem(SESSION_KEY, data.user_id);
+      // Older deployments of the login function don't issue a token; the rest
+      // of the site still works, only Host Events needs it.
+      setSessionToken(data.session_token || null);
       await refreshUser();
     },
     [refreshUser]
@@ -207,6 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem(SESSION_KEY);
+    setSessionToken(null);
     setUser(null);
   }, []);
 

@@ -6,6 +6,7 @@ import { usePermissions } from '@/lib/permissions';
 import {
   BarChart3, Users, TrendingUp, Compass, Shield, Activity, ChevronsUp, RefreshCw, Loader2,
 } from 'lucide-react';
+import { formatPersonName } from '@/lib/names';
 
 type Period = 7 | 14 | 30;
 type HRTab = 'analytics' | 'sergeant-promotions';
@@ -267,7 +268,7 @@ export function HRPanel() {
                 ) : (
                   <div className="space-y-1">
                     {d.users.map((u) => (
-                      <ActivityRow key={u.user.id} name={u.user.roblox_display_name || u.user.roblox_username} count={u.activityCount} />
+                      <ActivityRow key={u.user.id} name={formatPersonName(u.user.roblox_display_name, u.user.roblox_username)} count={u.activityCount} />
                     ))}
                   </div>
                 )}
@@ -294,7 +295,7 @@ export function HRPanel() {
                 ) : (
                   <div className="space-y-1">
                     {d.users.map((u) => (
-                      <ActivityRow key={u.user.id} name={u.user.roblox_display_name || u.user.roblox_username} count={u.activityCount} />
+                      <ActivityRow key={u.user.id} name={formatPersonName(u.user.roblox_display_name, u.user.roblox_username)} count={u.activityCount} />
                     ))}
                   </div>
                 )}
@@ -519,7 +520,7 @@ function SergeantPromotionsTab({
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-stone-100 truncate">
-                  {c.user?.roblox_display_name || c.user?.roblox_username || 'Unknown'}
+                  {formatPersonName(c.user?.roblox_display_name, c.user?.roblox_username)}
                 </p>
                 <p className="text-xs text-stone-500">
                   Reached 40 recent points on {new Date(c.qualified_at).toLocaleDateString(undefined, {

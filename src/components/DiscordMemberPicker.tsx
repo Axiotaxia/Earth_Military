@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DiscordMemberResult } from '@/lib/supabase';
+import { callHostEvents } from '@/lib/hostEventsApi';
+import { formatPersonName } from '@/lib/names';
 import { Search, Loader2, User } from 'lucide-react';
 
 interface DiscordMemberPickerProps {
@@ -17,6 +19,8 @@ export function DiscordMemberPicker({ placeholder = 'Search Discord members...',
   const [results, setResults] = useState<DiscordMemberResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -24,20 +28,21 @@ export function DiscordMemberPicker({ placeholder = 'Search Discord members...',
 
     if (query.trim().length < 2) {
       setResults([]);
+      setSearched(false);
+      setError(null);
       return;
     }
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
+      setError(null);
       try {
-        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-discord-members?q=${encodeURIComponent(query.trim())}`;
-        const resp = await fetch(url, {
-          headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        });
-        const data = await resp.json();
+        const data = await callHostEvents<{ members: DiscordMemberResult[] }>('search-members', { q: query.trim() });
         setResults(data.members || []);
-      } catch {
+        setSearched(true);
+      } catch (e) {
         setResults([]);
+        setError(e instanceof Error ? e.message : 'Search failed');
       } finally {
         setLoading(false);
       }
@@ -63,6 +68,11 @@ export function DiscordMemberPicker({ placeholder = 'Search Discord members...',
         {loading && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500 animate-spin" />}
       </div>
 
+      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {!error && !loading && searched && open && results.length === 0 && query.trim().length >= 2 && (
+        <p className="text-stone-500 text-xs mt-1">No matching Discord members found.</p>
+      )}
+
       {open && results.length > 0 && (
         <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto ek-panel border border-stone-700 shadow-xl">
           {results.map((m) => (
@@ -82,8 +92,7 @@ export function DiscordMemberPicker({ placeholder = 'Search Discord members...',
                 <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center"><User className="w-3.5 h-3.5 text-stone-400" /></div>
               )}
               <div className="min-w-0">
-                <p className="text-sm text-stone-200 truncate">{m.displayName}</p>
-                <p className="text-xs text-stone-500 truncate">@{m.username}</p>
+                <p className="text-sm text-stone-200 truncate">{formatPersonName(m.displayName, m.username)}</p>
               </div>
             </button>
           ))}

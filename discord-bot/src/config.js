@@ -23,5 +23,8 @@ export const config = {
     private: required('PRIVATE_ROLE_ID'),
   },
 
+  // Optional at boot, but Discord<->Roblox verification is disabled without it
+  bloxlinkApiKey: process.env.BLOXLINK_API_KEY || '',
+
   port: process.env.PORT || 3000,
 };

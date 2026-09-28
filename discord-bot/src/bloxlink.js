@@ -1,19 +1,31 @@
 import { config } from './config.js';
 
 /**
- * Resolves a Discord user ID to their linked Roblox user ID via Bloxlink's
- * public lookup API. Returns null if the user isn't linked or the lookup
- * fails - callers should treat that as "no site account", not an error.
+ * Looks up which Roblox account a Discord user has linked in Bloxlink for the
+ * Main server. Requires BLOXLINK_API_KEY (Bloxlink's API rejects keyless
+ * requests). Returns { robloxId, status } where status is one of:
+ * 'ok' | 'not_linked' | 'not_configured' | 'error'.
  */
-export async function resolveRobloxId(discordUserId) {
+export async function lookupRobloxId(discordUserId) {
+  if (!config.bloxlinkApiKey) return { robloxId: null, status: 'not_configured' };
+
   try {
     const resp = await fetch(
       `https://api.blox.link/v4/public/guilds/${config.mainServerId}/discord-to-roblox/${discordUserId}`,
+      { headers: { Authorization: config.bloxlinkApiKey } },
     );
-    if (!resp.ok) return null;
+    if (resp.status === 404) return { robloxId: null, status: 'not_linked' };
+    if (!resp.ok) return { robloxId: null, status: 'error' };
+
     const data = await resp.json();
-    return data.robloxID || null;
+    const id = data.robloxID ?? data.robloxId ?? data.user?.robloxId ?? null;
+    return id ? { robloxId: String(id), status: 'ok' } : { robloxId: null, status: 'not_linked' };
   } catch {
-    return null;
+    return { robloxId: null, status: 'error' };
   }
+}
+
+/** Convenience wrapper: just the Roblox ID (or null). */
+export async function resolveRobloxId(discordUserId) {
+  return (await lookupRobloxId(discordUserId)).robloxId;
 }

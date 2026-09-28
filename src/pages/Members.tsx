@@ -8,6 +8,7 @@ import {
   Search, Users, Shield, Award, Clock, Compass, X, ChevronRight, Filter, RotateCcw,
   Save, Loader2, Check, UserMinus, History,
 } from 'lucide-react';
+import { formatPersonName } from '@/lib/names';
 
 interface MemberWithDetails extends DbUser {
   division_name: string | null;
@@ -234,7 +235,7 @@ export function Members() {
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-stone-100 truncate">
-                  {m.roblox_display_name || m.roblox_username}
+                  {formatPersonName(m.roblox_display_name, m.roblox_username)}
                 </p>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
                   <span className="ek-badge bg-green-900/40 text-green-400 border border-green-800/40">
@@ -427,7 +428,7 @@ function MemberModal({
                     <p className="text-xs text-stone-500">
                       {new Date(t.created_at).toLocaleDateString()}
                       {t.awarded_by_user && (
-                        <> &middot; by {t.awarded_by_user.roblox_display_name || t.awarded_by_user.roblox_username}</>
+                        <> &middot; by {formatPersonName(t.awarded_by_user.roblox_display_name, t.awarded_by_user.roblox_username)}</>
                       )}
                     </p>
                   </div>

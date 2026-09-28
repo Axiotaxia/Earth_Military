@@ -5,6 +5,8 @@ import { db } from './supabase.js';
 import { buildDoubleExamPollMessage } from './messages.js';
 import { buildCoHostRequestMessage } from './cohost.js';
 import { VOTE_EMOJI } from './reactions.js';
+import { searchMembers } from './members.js';
+import { lookupRobloxId } from './bloxlink.js';
 
 export function createApiServer() {
   const app = express();
@@ -112,32 +114,28 @@ export function createApiServer() {
     }
   });
 
-  /**
-   * GET /members/search?q=name
-   * Searches the Main server's member list by username/display name, for the
-   * website's "pick a Discord member" pickers (host self-identification,
-   * guards, spectators, passed, training mentions). Returns up to 20 matches.
-   */
+  // GET /members/search?q=...  - display name / username / nickname search
   app.get('/members/search', async (req, res) => {
     try {
-      const query = (req.query.q || '').toString().trim().toLowerCase();
-      if (query.length < 2) {
-        return res.json({ members: [] });
-      }
-
-      const guild = await client.guilds.fetch(config.mainServerId);
-      // Discord's search API matches on username/nickname prefix server-side,
-      // which is far more reliable than trying to filter a locally cached list.
-      const results = await guild.members.search({ query, limit: 20 });
-
-      const members = results.map((m) => ({
-        discordId: m.user.id,
-        username: m.user.username,
-        displayName: m.displayName,
-        avatarUrl: m.user.displayAvatarURL({ size: 64 }),
-      }));
-
+      const members = await searchMembers((req.query.q || '').toString());
       res.json({ members });
+    } catch (err) {
+      console.error('members/search failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /identity/verify {discordId, robloxUserId}
+  // Confirms Bloxlink links that Discord account to that Roblox account.
+  app.post('/identity/verify', async (req, res) => {
+    try {
+      const { discordId, robloxUserId } = req.body || {};
+      if (!discordId || !robloxUserId) {
+        return res.status(400).json({ error: 'discordId and robloxUserId are required' });
+      }
+      const { robloxId, status } = await lookupRobloxId(String(discordId));
+      if (status !== 'ok') return res.json({ verified: false, reason: status });
+      res.json({ verified: robloxId === String(robloxUserId), reason: robloxId === String(robloxUserId) ? 'ok' : 'mismatch' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

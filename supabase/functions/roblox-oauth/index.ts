@@ -10,6 +10,33 @@ const ROBLOX_CLIENT_ID = "4235495123293811435";
 const ROBLOX_CLIENT_SECRET = Deno.env.get("ROBLOX_CLIENT_SECRET") || "";
 const GROUP_ID = 592750791;
 const OWNER_ROBLOX_ID = 593587739;
+const SESSION_SECRET = Deno.env.get("SESSION_SECRET") || "";
+const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+function b64url(input: ArrayBuffer | string): string {
+  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : new Uint8Array(input);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Signs a short-lived HS256 session token for the given user. Only the
+ * Host Events function trusts it (it re-verifies the signature server-side).
+ * Returns null if SESSION_SECRET isn't configured, so normal login keeps
+ * working and only hosting stays unavailable until the secret is set.
+ */
+async function signSessionToken(userId: string): Promise<string | null> {
+  if (!SESSION_SECRET) return null;
+  const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = b64url(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }));
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(SESSION_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${header}.${payload}`));
+  return `${header}.${payload}.${b64url(sig)}`;
+}
+
 
 interface RobloxTokenResponse {
   access_token: string;
@@ -192,8 +219,11 @@ Deno.serve(async (req: Request) => {
           }, { onConflict: "user_id" });
       }
 
+      const sessionToken = await signSessionToken(userId);
+
       return new Response(
         JSON.stringify({
+          session_token: sessionToken,
           user_id: userId,
           roblox_user_id: robloxUserId,
           roblox_username: userInfo.name,

@@ -5,6 +5,7 @@ import { usePermissions } from '@/lib/permissions';
 import {
   Search, X, Save, Loader2, Users, Shield, ArrowUp, Check,
 } from 'lucide-react';
+import { formatPersonName } from '@/lib/names';
 
 export function Promotions() {
   const { user } = useAuth();
@@ -214,7 +215,7 @@ export function Promotions() {
                     <div className="w-10 h-10 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-5 h-5 text-stone-400" /></div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-stone-100 truncate">{m.user.roblox_display_name || m.user.roblox_username}</p>
+                    <p className="text-sm font-medium text-stone-100 truncate">{formatPersonName(m.user.roblox_display_name, m.user.roblox_username)}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-stone-500">{m.user.group_rank_name}</span>
                       {m.rank && <span className="text-xs text-amber-500">→ {m.rank.name}</span>}
@@ -242,7 +243,7 @@ export function Promotions() {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setPromoting(null)}>
           <div className="ek-panel max-w-md w-full p-6 animate-scale-in" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-amber-400">Promote {promoting.user.roblox_display_name || promoting.user.roblox_username}</h2>
+              <h2 className="text-lg font-semibold text-amber-400">Promote {formatPersonName(promoting.user.roblox_display_name, promoting.user.roblox_username)}</h2>
               <button onClick={() => setPromoting(null)} className="text-stone-400 hover:text-stone-200"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-sm text-stone-400 mb-4">

@@ -3,9 +3,11 @@ import { createApiServer } from './api.js';
 import { handleReactionAdd, handleReactionRemove } from './reactions.js';
 import { handleCoHostClaim } from './cohost.js';
 import { config } from './config.js';
+import { warmMemberCache } from './members.js';
 
 async function main() {
   await startClient();
+  await warmMemberCache().catch((err) => console.error('Member cache warm failed (is the Server Members intent enabled?):', err.message));
 
   client.on('messageReactionAdd', (reaction, user) => {
     handleReactionAdd(reaction, user).catch((err) => console.error('handleReactionAdd error:', err));

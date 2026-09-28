@@ -44,9 +44,23 @@ In your Supabase project, go to Edge Functions -> Manage secrets, and add:
 
 - `BOT_API_URL` = the Railway URL from step 6 above
 - `BOT_API_SECRET` = the same value you set as `BOT_API_SECRET` on Railway
+- `SESSION_SECRET` = a NEW long random string (e.g. `openssl rand -hex 32`).
+  Used to sign and verify login session tokens. Keep it different from
+  `BOT_API_SECRET`, and never share it.
 
-These are read by the `create-double-exam`, `search-discord-members`, and
-`get-vote-counts` edge functions to call into this bot securely.
+Then **deploy these two edge functions** (a git push alone does not deploy them):
+
+- `host-events` (new - the only function the Host Events page talks to)
+- `roblox-oauth` (updated - it now issues the signed session token at login)
+
+Anyone who wants to host must sign out and back in once so they receive a token.
+
+## Bloxlink (verifying a host's Discord account)
+
+Bloxlink's API needs a key: get one from the Bloxlink developer dashboard and
+set it as `BLOXLINK_API_KEY` on Railway. When a host picks their Discord
+account, the bot asks Bloxlink whether it is linked to that host's Roblox
+account and refuses if not, so nobody can claim someone else's Discord identity.
 
 ## Security notes
 

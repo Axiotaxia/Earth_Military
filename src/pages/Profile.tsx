@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { formatPersonName } from '@/lib/names';
 import { supabase, TIMEZONES, PATHS, SUBS, PointTransaction, Division, DivisionRank, DbUser, getNextPointsResetDate } from '@/lib/supabase';
 import {
   Shield, Clock, Compass, Award, Users, Save, Loader2, Check, History,
@@ -225,7 +226,7 @@ export function Profile() {
                   <p className="text-xs text-stone-500">
                     {new Date(t.created_at).toLocaleDateString()}
                     {t.awarded_by_user && (
-                      <> &middot; by {t.awarded_by_user.roblox_display_name || t.awarded_by_user.roblox_username}</>
+                      <> &middot; by {formatPersonName(t.awarded_by_user.roblox_display_name, t.awarded_by_user.roblox_username)}</>
                     )}
                   </p>
                 </div>
