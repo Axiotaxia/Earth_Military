@@ -110,7 +110,7 @@ async function requireHost(supabase: ReturnType<typeof createClient>, userId: st
 // ---------- bot calls ----------
 async function callBot(path: string, init: RequestInit = {}) {
   if (!BOT_API_URL || !BOT_API_SECRET) throw new HttpError(500, "Bot API is not configured");
-  const resp = await fetch(`${BOT_API_URL}${path}`, {
+  const resp = await fetch(`https://${BOT_API_URL}${path}`, {
     ...init,
     headers: { ...(init.headers || {}), Authorization: `Bearer ${BOT_API_SECRET}`, "Content-Type": "application/json" },
   });
