@@ -46,8 +46,12 @@ const EXAM_LABELS = {
  * known); coHostRoleLabel is the eligible co-host rank text shown under each
  * exam (e.g. "Corporal Sergeant").
  */
-export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHostRoleLabel }) {
+export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHostRoleLabel, slots = [] }) {
   const hostLine = hostDiscordId ? `Host: <@${hostDiscordId}>` : 'Host: ';
+  const coHostLine = (slotIndex) => {
+    const claimed = slots.find((sl) => sl.slot_index === slotIndex)?.claimed_by_discord_id;
+    return `Co-Host: ${claimed ? `<@${claimed}>` : coHostRoleLabel}`;
+  };
 
   return {
     components: [
@@ -58,11 +62,11 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
         separator(),
         textDisplay(`### ${EXAM_LABELS.slot_1.title}`),
         textDisplay(`\`\`\`${EXAM_LABELS.slot_1.description}\`\`\``),
-        textDisplay(`Co-Host: ${coHostRoleLabel}`),
+        textDisplay(coHostLine(1)),
         separator(),
         textDisplay(`### ${EXAM_LABELS.slot_2.title}`),
         textDisplay(`\`\`\`${EXAM_LABELS.slot_2.description}\`\`\``),
-        textDisplay(`Co-Host: ${coHostRoleLabel}`),
+        textDisplay(coHostLine(2)),
         separator(),
         textDisplay('```\nOnly vote if you\'re off cooldown and able to attend\n2 warnings = dismissal\n```'),
       ]),
@@ -71,3 +75,13 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
 }
 
 export { relativeTimestamp, EXAM_LABELS };
+
+export const IS_COMPONENTS_V2 = 1 << 15;
+
+export function buildStartMessage({ hostDiscordId, activities }) {
+  const names = [];
+  if (activities.slot_1) names.push('Citizen \u27a4 Private');
+  if (activities.slot_2) names.push('Private \u27a4 Soldier');
+  const what = names.length === 2 ? `${names[0]} and ${names[1]} exams are` : `${names[0]} exam is`;
+  return `${EARTH_EMOJI} **${what} commencing.** DM <@${hostDiscordId}> for the link.`;
+}

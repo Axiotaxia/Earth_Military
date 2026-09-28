@@ -1,7 +1,7 @@
 import { client, startClient } from './client.js';
 import { createApiServer } from './api.js';
 import { handleReactionAdd, handleReactionRemove } from './reactions.js';
-import { handleCoHostClaim } from './cohost.js';
+import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
 import { config } from './config.js';
 import { warmMemberCache } from './members.js';
 
@@ -19,7 +19,12 @@ async function main() {
 
   client.on('interactionCreate', (interaction) => {
     if (!interaction.isButton()) return;
-    if (interaction.customId.startsWith('cohost_claim:')) {
+    if (interaction.customId.startsWith('cohost_unclaim:')) {
+      handleCoHostUnclaim(interaction).catch((err) => {
+        console.error('handleCoHostUnclaim error:', err);
+        interaction.reply({ content: 'Something went wrong.', ephemeral: true }).catch(() => null);
+      });
+    } else if (interaction.customId.startsWith('cohost_claim:')) {
       handleCoHostClaim(interaction).catch((err) => {
         console.error('handleCoHostClaim error:', err);
         interaction.reply({ content: 'Something went wrong claiming this slot.', ephemeral: true }).catch(() => null);

@@ -80,7 +80,13 @@ async function verifySessionTokenUnsafe(token: string): Promise<string> {
 }
 
 // ---------- permission check (mirrors the site's effective-permission merge) ----------
-async function requireHost(supabase: ReturnType<typeof createClient>, userId: string) {
+// Passes if the user holds ANY of the given permissions via their own row,
+// their Roblox group rank, or their division rank. The owner always passes.
+async function requireAnyPermission(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  keys: string[],
+) {
   const { data: user } = await supabase.from("users").select("*").eq("id", userId).maybeSingle();
   if (!user) throw new HttpError(401, "Unknown user");
   if (user.group_rank < MIN_SITE_ACCESS_RANK) throw new HttpError(403, "Rank requirement not met");
@@ -89,21 +95,20 @@ async function requireHost(supabase: ReturnType<typeof createClient>, userId: st
   if (isOwner) return { user, isOwner };
 
   const [perms, groupPerms, member] = await Promise.all([
-    supabase.from("user_permissions").select("can_host_events").eq("user_id", userId).maybeSingle(),
-    supabase.from("group_rank_permissions").select("can_host_events").eq("group_rank", user.group_rank).maybeSingle(),
+    supabase.from("user_permissions").select("*").eq("user_id", userId).maybeSingle(),
+    supabase.from("group_rank_permissions").select("*").eq("group_rank", user.group_rank).maybeSingle(),
     supabase.from("division_members").select("division_rank_id").eq("user_id", userId).maybeSingle(),
   ]);
 
-  let divisionAllows = false;
+  let divisionRank: Record<string, unknown> | null = null;
   if (member.data?.division_rank_id) {
     const { data: rank } = await supabase
-      .from("division_ranks").select("can_host_events").eq("id", member.data.division_rank_id).maybeSingle();
-    divisionAllows = !!rank?.can_host_events;
+      .from("division_ranks").select("*").eq("id", member.data.division_rank_id).maybeSingle();
+    divisionRank = rank;
   }
 
-  if (!(perms.data?.can_host_events || groupPerms.data?.can_host_events || divisionAllows)) {
-    throw new HttpError(403, "You do not have permission to host events");
-  }
+  const allowed = keys.some((k) => perms.data?.[k] || groupPerms.data?.[k] || divisionRank?.[k]);
+  if (!allowed) throw new HttpError(403, "You do not have permission to do that");
   return { user, isOwner };
 }
 
@@ -127,10 +132,13 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const userId = await verifySessionToken(token);
-    const { user, isOwner } = await requireHost(supabase, userId);
 
     const body = await req.json().catch(() => ({}));
     const action = body.action as string;
+
+    // Points awarders may look people up by Discord name; everything else is host-only.
+    const keys = action === "search-players" ? ["can_award_points", "can_host_events"] : ["can_host_events"];
+    const { user, isOwner } = await requireAnyPermission(supabase, userId, keys);
 
     if (action === "search-members") {
       const q = String(body.q || "").slice(0, 50);
@@ -199,6 +207,60 @@ Deno.serve(async (req: Request) => {
         throw e;
       }
       return json({ ok: true, eventId: event.id });
+    }
+
+    // Loads an event and makes sure the caller may manage it (its host, or the owner)
+    const loadOwnEvent = async (eventId: string) => {
+      const { data: event } = await supabase.from("events").select("*").eq("id", eventId).maybeSingle();
+      if (!event) throw new HttpError(404, "Event not found");
+      if (event.host_user_id !== user.id && !isOwner) throw new HttpError(403, "Not your event");
+      return event;
+    };
+
+    if (action === "search-players") {
+      const q = String(body.q || "").slice(0, 50);
+      const linked = await callBot(`/members/search-linked?q=${encodeURIComponent(q)}`);
+      const ids = (linked.members || []).filter((m: { robloxId: string | null }) => m.robloxId).map((m: { robloxId: string }) => Number(m.robloxId));
+      if (ids.length === 0) return json({ players: [] });
+
+      const { data: rows } = await supabase.from("users").select("id, roblox_user_id").in("roblox_user_id", ids);
+      const players = (rows || []).map((u) => {
+        const m = linked.members.find((x: { robloxId: string }) => Number(x.robloxId) === u.roblox_user_id);
+        return { userId: u.id, discordDisplayName: m?.displayName || null, discordUsername: m?.username || null };
+      });
+      return json({ players });
+    }
+
+    if (action === "force-unclaim") {
+      const event = await loadOwnEvent(String(body.eventId || ""));
+      if (event.status !== "posted") throw new HttpError(409, "This event is no longer taking co-hosts");
+      const slotIndex = Number(body.slotIndex);
+      const { error } = await supabase.from("event_cohost_slots")
+        .update({ claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null })
+        .eq("event_id", event.id).eq("slot_index", slotIndex);
+      if (error) throw new HttpError(500, error.message);
+      await callBot(`/events/${event.id}/refresh`, { method: "POST" }).catch(() => null);
+      return json({ ok: true });
+    }
+
+    if (action === "start-event") {
+      const event = await loadOwnEvent(String(body.eventId || ""));
+      if (event.event_type !== "double_exam") throw new HttpError(400, "Unsupported event type");
+      const activities = { slot_1: !!body.activities?.slot_1, slot_2: !!body.activities?.slot_2 };
+      if (!activities.slot_1 && !activities.slot_2) throw new HttpError(400, "Pick at least one exam to run");
+      await callBot(`/events/${event.id}/start-double-exam`, { method: "POST", body: JSON.stringify({ activities }) });
+      return json({ ok: true });
+    }
+
+    if (action === "cancel-event") {
+      const event = await loadOwnEvent(String(body.eventId || ""));
+      if (!["draft", "posted"].includes(event.status)) throw new HttpError(409, "Only events that haven't started can be cancelled");
+      const { data: moved } = await supabase.from("events")
+        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+        .eq("id", event.id).in("status", ["draft", "posted"]).select("id");
+      if (!moved || moved.length === 0) throw new HttpError(409, "Event state changed - refresh and try again");
+      await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
+      return json({ ok: true });
     }
 
     if (action === "vote-counts") {

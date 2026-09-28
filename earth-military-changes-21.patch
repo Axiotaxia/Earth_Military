@@ -1,0 +1,929 @@
+From fe76ffb05f3b91c1f0e195051a7f0e90ec0ac138 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Mon, 28 Sep 2026 19:33:47 +0000
+Subject: [PATCH] Host Events: unclaim, co-host names on poll,
+ decide/start/cancel screen, Discord-name search on Points
+
+- Co-hosts can unclaim from Discord; host (or owner) can force-unclaim on the site; poll and request message re-render with @co-host
+- Claim limit now only counts still-open events (finished events no longer block claiming)
+- Decide & Start screen: suggests exams from votes, warns on no votes/no co-host, Start posts the commencing message and removes poll + request, Cancel removes them
+- Active events list on the Host Events page
+- Points search matches Roblox display name, username, or Discord name (via Bloxlink); can_award_points holders allowed to use it
+- v21
+---
+ discord-bot/src/api.js                  |  72 ++++++++-
+ discord-bot/src/bloxlink.js             |  12 ++
+ discord-bot/src/cohost.js               | 130 +++++++++------
+ discord-bot/src/index.js                |   9 +-
+ discord-bot/src/messages.js             |  20 ++-
+ src/lib/version.ts                      |   2 +-
+ src/pages/HostEvents.tsx                | 206 +++++++++++++++++++++---
+ src/pages/Points.tsx                    |  40 ++++-
+ supabase/functions/host-events/index.ts |  82 ++++++++--
+ 9 files changed, 479 insertions(+), 94 deletions(-)
+
+diff --git a/discord-bot/src/api.js b/discord-bot/src/api.js
+index da88530..1f71fe8 100644
+--- a/discord-bot/src/api.js
++++ b/discord-bot/src/api.js
+@@ -2,8 +2,8 @@ import express from 'express';
+ import { config } from './config.js';
+ import { client } from './client.js';
+ import { db } from './supabase.js';
+-import { buildDoubleExamPollMessage } from './messages.js';
+-import { buildCoHostRequestMessage } from './cohost.js';
++import { buildDoubleExamPollMessage, buildStartMessage, IS_COMPONENTS_V2 } from './messages.js';
++import { buildCoHostRequestMessage, refreshEventMessages } from './cohost.js';
+ import { VOTE_EMOJI } from './reactions.js';
+ import { searchMembers } from './members.js';
+ import { lookupRobloxId } from './bloxlink.js';
+@@ -46,10 +46,10 @@ export function createApiServer() {
+         scheduledFor: new Date(event.scheduled_for),
+         hostDiscordId: event.host_discord_id,
+         coHostRoleLabel: 'Corporal Sergeant',
++        slots: cohostSlots,
+       });
+ 
+-      const IS_COMPONENTS_V2 = 1 << 15;
+-      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2 });
++      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+ 
+       await sentPoll.react(VOTE_EMOJI.slot_1);
+       await sentPoll.react(VOTE_EMOJI.slot_2);
+@@ -114,6 +114,70 @@ export function createApiServer() {
+     }
+   });
+ 
++  // POST /events/:id/refresh - re-render poll + co-host message from DB state
++  app.post('/events/:id/refresh', async (req, res) => {
++    try {
++      await refreshEventMessages(req.params.id);
++      res.json({ ok: true });
++    } catch (err) {
++      res.status(500).json({ error: err.message });
++    }
++  });
++
++  // POST /events/:id/start-double-exam {activities:{slot_1,slot_2}}
++  // Claims the posted -> started transition atomically (so a double click can't
++  // post twice), announces the start, then removes the poll + co-host messages.
++  app.post('/events/:id/start-double-exam', async (req, res) => {
++    const { id: eventId } = req.params;
++    let claimed = false;
++    try {
++      const activities = { slot_1: !!req.body?.activities?.slot_1, slot_2: !!req.body?.activities?.slot_2 };
++      if (!activities.slot_1 && !activities.slot_2) return res.status(400).json({ error: 'Pick at least one exam' });
++
++      const moved = await db.update('events', `id=eq.${eventId}&status=eq.posted`, {
++        status: 'started',
++        started_at: new Date().toISOString(),
++        decided_activities: activities,
++      });
++      if (moved.length === 0) return res.status(409).json({ error: 'Event is not in a state that can be started' });
++      claimed = true;
++      const event = moved[0];
++
++      const mainGuild = await client.guilds.fetch(config.mainServerId);
++      const channel = await mainGuild.channels.fetch(config.mainEventsChannelId);
++      const sent = await channel.send({
++        content: buildStartMessage({ hostDiscordId: event.host_discord_id, activities }),
++        allowedMentions: { parse: [] },
++      });
++
++      await db.update('events', `id=eq.${eventId}`, { start_channel_id: config.mainEventsChannelId, start_message_id: sent.id });
++
++      for (const [chId, msgId] of [[event.poll_channel_id, event.poll_message_id], [event.cohost_channel_id, event.cohost_message_id]]) {
++        if (!chId || !msgId) continue;
++        const ch = await client.channels.fetch(chId).catch(() => null);
++        const msg = ch ? await ch.messages.fetch(msgId).catch(() => null) : null;
++        if (msg) await msg.delete().catch(() => null);
++      }
++      res.json({ ok: true });
++    } catch (err) {
++      console.error('start-double-exam failed:', err);
++      // If we claimed the transition but couldn't announce, let the host retry
++      if (claimed) await db.update('events', `id=eq.${eventId}`, { status: 'posted', started_at: null, decided_activities: null }).catch(() => null);
++      res.status(500).json({ error: err.message });
++    }
++  });
++
++  // GET /members/search-linked?q=  - members plus their Bloxlink-linked Roblox ID
++  app.get('/members/search-linked', async (req, res) => {
++    try {
++      const found = await searchMembers((req.query.q || '').toString(), 8);
++      const members = await Promise.all(found.map(async (m) => ({ ...m, robloxId: (await lookupRobloxId(m.discordId)).robloxId })));
++      res.json({ members });
++    } catch (err) {
++      res.status(500).json({ error: err.message });
++    }
++  });
++
+   // GET /members/search?q=...  - display name / username / nickname search
+   app.get('/members/search', async (req, res) => {
+     try {
+diff --git a/discord-bot/src/bloxlink.js b/discord-bot/src/bloxlink.js
+index e0f2636..6f6c009 100644
+--- a/discord-bot/src/bloxlink.js
++++ b/discord-bot/src/bloxlink.js
+@@ -6,8 +6,20 @@ import { config } from './config.js';
+  * requests). Returns { robloxId, status } where status is one of:
+  * 'ok' | 'not_linked' | 'not_configured' | 'error'.
+  */
++const CACHE_MS = 10 * 60 * 1000;
++const cache = new Map(); // discordId -> { at, result }
++
+ export async function lookupRobloxId(discordUserId) {
+   if (!config.bloxlinkApiKey) return { robloxId: null, status: 'not_configured' };
++  const hit = cache.get(discordUserId);
++  if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
++  const result = await lookupUncached(discordUserId);
++  // Only remember definite answers, never transient errors
++  if (result.status === 'ok' || result.status === 'not_linked') cache.set(discordUserId, { at: Date.now(), result });
++  return result;
++}
++
++async function lookupUncached(discordUserId) {
+ 
+   try {
+     const resp = await fetch(
+diff --git a/discord-bot/src/cohost.js b/discord-bot/src/cohost.js
+index 28e3bb8..db4dc21 100644
+--- a/discord-bot/src/cohost.js
++++ b/discord-bot/src/cohost.js
+@@ -1,17 +1,17 @@
+ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
++import { client } from './client.js';
+ import { db } from './supabase.js';
+ import { resolveRobloxId } from './bloxlink.js';
++import { buildDoubleExamPollMessage, IS_COMPONENTS_V2 } from './messages.js';
+ 
+-/**
+- * Builds the co-host request message posted in the Military server, with one
+- * "Claim" button per open slot. Button custom IDs encode the event and slot
+- * so the interaction handler can look them up without extra state.
+- */
+-export function buildCoHostRequestMessage({ eventId, slots }) {
+-  const row = new ActionRowBuilder();
++const NO_PINGS = { parse: [] };
++const OPEN_STATUSES = 'draft,posted,ready,started';
+ 
++/** Co-host request message: one Claim button per slot plus an Unclaim button. */
++export function buildCoHostRequestMessage({ eventId, slots }) {
++  const claimRow = new ActionRowBuilder();
+   for (const slot of slots) {
+-    row.addComponents(
++    claimRow.addComponents(
+       new ButtonBuilder()
+         .setCustomId(`cohost_claim:${eventId}:${slot.slot_index}`)
+         .setLabel(slot.label ? `Claim: ${slot.label}` : 'Claim Co-Host')
+@@ -19,37 +19,64 @@ export function buildCoHostRequestMessage({ eventId, slots }) {
+         .setDisabled(!!slot.claimed_by_discord_id),
+     );
+   }
++  const unclaimRow = new ActionRowBuilder().addComponents(
++    new ButtonBuilder()
++      .setCustomId(`cohost_unclaim:${eventId}`)
++      .setLabel('Unclaim my co-host spot')
++      .setStyle(ButtonStyle.Secondary),
++  );
+ 
+   const lines = ['**Co-Host Requests**', ''];
+   for (const slot of slots) {
+-    const status = slot.claimed_by_discord_id
+-      ? `Claimed by <@${slot.claimed_by_discord_id}>`
+-      : 'Open';
+-    lines.push(`${slot.label || 'Co-Host'}: ${status}`);
++    lines.push(`${slot.label || 'Co-Host'}: ${slot.claimed_by_discord_id ? `<@${slot.claimed_by_discord_id}>` : 'Open'}`);
+   }
++  return { content: lines.join('\n'), components: [claimRow, unclaimRow], allowedMentions: NO_PINGS };
++}
+ 
+-  return {
+-    content: lines.join('\n'),
+-    components: [row],
+-  };
++async function fetchMessage(channelId, messageId) {
++  if (!channelId || !messageId) return null;
++  const channel = await client.channels.fetch(channelId).catch(() => null);
++  return channel ? channel.messages.fetch(messageId).catch(() => null) : null;
+ }
+ 
+-/**
+- * Handles a "Claim" button click. Enforces: one person can't co-host
+- * multiple events at once, and two people can't claim the same event's
+- * slots. First click wins; if the slot's already taken by the time this
+- * resolves, the clicker gets an ephemeral "too late" reply.
+- */
++/** Re-renders both the co-host request message and the poll from current DB state. */
++export async function refreshEventMessages(eventId) {
++  const [event] = await db.select('events', `id=eq.${eventId}&select=*`);
++  if (!event) return;
++  const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*&order=slot_index`);
++
++  const cohostMsg = await fetchMessage(event.cohost_channel_id, event.cohost_message_id);
++  if (cohostMsg) await cohostMsg.edit(buildCoHostRequestMessage({ eventId, slots })).catch(() => null);
++
++  const pollMsg = await fetchMessage(event.poll_channel_id, event.poll_message_id);
++  if (pollMsg) {
++    const poll = buildDoubleExamPollMessage({
++      scheduledFor: new Date(event.scheduled_for),
++      hostDiscordId: event.host_discord_id,
++      coHostRoleLabel: 'Corporal Sergeant',
++      slots,
++    });
++    await pollMsg.edit({ ...poll, flags: IS_COMPONENTS_V2, allowedMentions: NO_PINGS }).catch(() => null);
++  }
++}
++
++async function openEvent(eventId) {
++  const [event] = await db.select('events', `id=eq.${eventId}&select=id,status`);
++  return event && event.status === 'posted' ? event : null;
++}
++
++/** Claim button. First click wins; one open co-host spot per person. */
+ export async function handleCoHostClaim(interaction) {
+   const [, eventId, slotIndexStr] = interaction.customId.split(':');
+   const slotIndex = Number(slotIndexStr);
+ 
+-  const slots = await db.select(
+-    'event_cohost_slots',
+-    `event_id=eq.${eventId}&select=*`,
+-  );
+-  const targetSlot = slots.find((s) => s.slot_index === slotIndex);
++  if (!(await openEvent(eventId))) {
++    await interaction.reply({ content: 'This event is no longer taking co-hosts.', ephemeral: true });
++    return;
++  }
+ 
++  const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*`);
++  const targetSlot = slots.find((s) => s.slot_index === slotIndex);
+   if (!targetSlot) {
+     await interaction.reply({ content: 'This co-host slot no longer exists.', ephemeral: true });
+     return;
+@@ -59,14 +86,14 @@ export async function handleCoHostClaim(interaction) {
+     return;
+   }
+ 
+-  // One person can't co-host multiple events, or both slots of the same event
+-  const alreadyClaimedElsewhere = await db.select(
++  // Only spots on events that are still open count (finished events don't lock you out)
++  const active = await db.select(
+     'event_cohost_slots',
+-    `claimed_by_discord_id=eq.${interaction.user.id}&select=id`,
++    `claimed_by_discord_id=eq.${interaction.user.id}&select=id,events!inner(status)&events.status=in.(${OPEN_STATUSES})`,
+   );
+-  if (alreadyClaimedElsewhere.length > 0) {
++  if (active.length > 0) {
+     await interaction.reply({
+-      content: "You're already co-hosting another event, so you can't claim this one too.",
++      content: "You're already co-hosting an event. Unclaim that spot first if you want this one.",
+       ephemeral: true,
+     });
+     return;
+@@ -75,8 +102,7 @@ export async function handleCoHostClaim(interaction) {
+   const robloxUserId = await resolveRobloxId(interaction.user.id);
+   let linkedUser = null;
+   if (robloxUserId) {
+-    const matches = await db.select('users', `roblox_user_id=eq.${robloxUserId}&select=id`);
+-    linkedUser = matches[0] || null;
++    linkedUser = (await db.select('users', `roblox_user_id=eq.${robloxUserId}&select=id`))[0] || null;
+   }
+ 
+   const updated = await db.update(
+@@ -84,25 +110,39 @@ export async function handleCoHostClaim(interaction) {
+     `id=eq.${targetSlot.id}&claimed_by_discord_id=is.null`,
+     {
+       claimed_by_discord_id: interaction.user.id,
+-      claimed_by_discord_username: interaction.user.username,
++      claimed_by_discord_username: interaction.member?.displayName || interaction.user.username,
+       claimed_by_roblox_user_id: linkedUser?.id || null,
+       claimed_at: new Date().toISOString(),
+     },
+   );
+-
+   if (updated.length === 0) {
+-    // Someone else claimed it in the split second between our checks
+     await interaction.reply({ content: 'Someone just claimed this slot before you.', ephemeral: true });
+     return;
+   }
+ 
+-  await interaction.reply({
+-    content: `You're now co-hosting: ${targetSlot.label || 'this event'}.`,
+-    ephemeral: true,
+-  });
++  await interaction.reply({ content: `You're now co-hosting: ${targetSlot.label || 'this event'}.`, ephemeral: true });
++  await refreshEventMessages(eventId);
++}
++
++/** Unclaim button: only releases spots the clicker actually holds. */
++export async function handleCoHostUnclaim(interaction) {
++  const [, eventId] = interaction.customId.split(':');
++
++  if (!(await openEvent(eventId))) {
++    await interaction.reply({ content: 'This event has already started or ended.', ephemeral: true });
++    return;
++  }
++
++  const released = await db.update(
++    'event_cohost_slots',
++    `event_id=eq.${eventId}&claimed_by_discord_id=eq.${interaction.user.id}`,
++    { claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null },
++  );
++  if (released.length === 0) {
++    await interaction.reply({ content: "You aren't co-hosting this event.", ephemeral: true });
++    return;
++  }
+ 
+-  // Refresh the whole request message to reflect the new claim + disable that button
+-  const refreshedSlots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*&order=slot_index`);
+-  const message = buildCoHostRequestMessage({ eventId, slots: refreshedSlots });
+-  await interaction.message.edit(message).catch(() => null);
++  await interaction.reply({ content: 'You gave up your co-host spot.', ephemeral: true });
++  await refreshEventMessages(eventId);
+ }
+diff --git a/discord-bot/src/index.js b/discord-bot/src/index.js
+index 7860a6f..a197c8b 100644
+--- a/discord-bot/src/index.js
++++ b/discord-bot/src/index.js
+@@ -1,7 +1,7 @@
+ import { client, startClient } from './client.js';
+ import { createApiServer } from './api.js';
+ import { handleReactionAdd, handleReactionRemove } from './reactions.js';
+-import { handleCoHostClaim } from './cohost.js';
++import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
+ import { config } from './config.js';
+ import { warmMemberCache } from './members.js';
+ 
+@@ -19,7 +19,12 @@ async function main() {
+ 
+   client.on('interactionCreate', (interaction) => {
+     if (!interaction.isButton()) return;
+-    if (interaction.customId.startsWith('cohost_claim:')) {
++    if (interaction.customId.startsWith('cohost_unclaim:')) {
++      handleCoHostUnclaim(interaction).catch((err) => {
++        console.error('handleCoHostUnclaim error:', err);
++        interaction.reply({ content: 'Something went wrong.', ephemeral: true }).catch(() => null);
++      });
++    } else if (interaction.customId.startsWith('cohost_claim:')) {
+       handleCoHostClaim(interaction).catch((err) => {
+         console.error('handleCoHostClaim error:', err);
+         interaction.reply({ content: 'Something went wrong claiming this slot.', ephemeral: true }).catch(() => null);
+diff --git a/discord-bot/src/messages.js b/discord-bot/src/messages.js
+index 858becc..bbb157a 100644
+--- a/discord-bot/src/messages.js
++++ b/discord-bot/src/messages.js
+@@ -46,8 +46,12 @@ const EXAM_LABELS = {
+  * known); coHostRoleLabel is the eligible co-host rank text shown under each
+  * exam (e.g. "Corporal Sergeant").
+  */
+-export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHostRoleLabel }) {
++export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHostRoleLabel, slots = [] }) {
+   const hostLine = hostDiscordId ? `Host: <@${hostDiscordId}>` : 'Host: ';
++  const coHostLine = (slotIndex) => {
++    const claimed = slots.find((sl) => sl.slot_index === slotIndex)?.claimed_by_discord_id;
++    return `Co-Host: ${claimed ? `<@${claimed}>` : coHostRoleLabel}`;
++  };
+ 
+   return {
+     components: [
+@@ -58,11 +62,11 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
+         separator(),
+         textDisplay(`### ${EXAM_LABELS.slot_1.title}`),
+         textDisplay(`\`\`\`${EXAM_LABELS.slot_1.description}\`\`\``),
+-        textDisplay(`Co-Host: ${coHostRoleLabel}`),
++        textDisplay(coHostLine(1)),
+         separator(),
+         textDisplay(`### ${EXAM_LABELS.slot_2.title}`),
+         textDisplay(`\`\`\`${EXAM_LABELS.slot_2.description}\`\`\``),
+-        textDisplay(`Co-Host: ${coHostRoleLabel}`),
++        textDisplay(coHostLine(2)),
+         separator(),
+         textDisplay('```\nOnly vote if you\'re off cooldown and able to attend\n2 warnings = dismissal\n```'),
+       ]),
+@@ -71,3 +75,13 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
+ }
+ 
+ export { relativeTimestamp, EXAM_LABELS };
++
++export const IS_COMPONENTS_V2 = 1 << 15;
++
++export function buildStartMessage({ hostDiscordId, activities }) {
++  const names = [];
++  if (activities.slot_1) names.push('Citizen \u27a4 Private');
++  if (activities.slot_2) names.push('Private \u27a4 Soldier');
++  const what = names.length === 2 ? `${names[0]} and ${names[1]} exams are` : `${names[0]} exam is`;
++  return `${EARTH_EMOJI} **${what} commencing.** DM <@${hostDiscordId}> for the link.`;
++}
+diff --git a/src/lib/version.ts b/src/lib/version.ts
+index 683d544..d5db7a9 100644
+--- a/src/lib/version.ts
++++ b/src/lib/version.ts
+@@ -3,5 +3,5 @@
+  * whether the live site has actually picked up the latest deploy. Shown in
+  * the sidebar footer.
+  */
+-export const SITE_VERSION = 'v20';
++export const SITE_VERSION = 'v21';
+ export const SITE_VERSION_DATE = '2026-09-21';
+diff --git a/src/pages/HostEvents.tsx b/src/pages/HostEvents.tsx
+index 9df5144..e52fb60 100644
+--- a/src/pages/HostEvents.tsx
++++ b/src/pages/HostEvents.tsx
+@@ -6,7 +6,7 @@ import { DiscordMemberPicker } from '@/components/DiscordMemberPicker';
+ import { callHostEvents } from '@/lib/hostEventsApi';
+ import { formatPersonName } from '@/lib/names';
+ import {
+-  Swords, Calendar, Loader2, Check, Users, ShieldAlert, ArrowLeft, RefreshCw, Trophy,
++  Swords, Calendar, Loader2, Check, Users, ShieldAlert, ArrowLeft, RefreshCw, Trophy, Play, Ban, UserMinus, AlertTriangle,
+ } from 'lucide-react';
+ 
+ type EventTypeOption = 'corporal_exam' | 'private_exam' | 'soldier_exam' | 'double_exam' | 'training';
+@@ -24,6 +24,18 @@ export function HostEvents() {
+   const { user } = useAuth();
+   const [screen, setScreen] = useState<'pick' | 'create' | 'status'>('pick');
+   const [activeEventId, setActiveEventId] = useState<string | null>(null);
++  const [myEvents, setMyEvents] = useState<HostedEvent[]>([]);
++
++  useEffect(() => {
++    if (!user || screen !== 'pick') return;
++    supabase
++      .from('events')
++      .select('*')
++      .eq('host_user_id', user.id)
++      .in('status', ['posted', 'started'])
++      .order('created_at', { ascending: false })
++      .then(({ data }) => setMyEvents(data || []));
++  }, [user, screen]);
+ 
+   if (!perms.can_host_events) {
+     return (
+@@ -81,6 +93,26 @@ export function HostEvents() {
+           );
+         })}
+       </div>
++
++      {myEvents.length > 0 && (
++        <div className="ek-panel p-4">
++          <h2 className="ek-section-title">Your active events</h2>
++          <div className="space-y-2">
++            {myEvents.map((ev) => (
++              <button
++                key={ev.id}
++                onClick={() => { setActiveEventId(ev.id); setScreen('status'); }}
++                className="w-full flex items-center justify-between p-2 bg-stone-800/50 rounded-md hover:bg-stone-800 text-left"
++              >
++                <span className="text-sm text-stone-200">
++                  {EVENT_TYPE_LABELS[ev.event_type]} &middot; {new Date(ev.scheduled_for).toLocaleString()}
++                </span>
++                <span className="text-xs text-amber-400 capitalize">{ev.status}</span>
++              </button>
++            ))}
++          </div>
++        </div>
++      )}
+     </div>
+   );
+ }
+@@ -194,14 +226,30 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
+   );
+ }
+ 
++const EXAM_NAMES: Record<'slot_1' | 'slot_2', string> = {
++  slot_1: 'Citizen \u2192 Private',
++  slot_2: 'Private \u2192 Soldier',
++};
++
++type Selection = { slot_1: boolean; slot_2: boolean };
++
++/** Both exams run if both got votes; if only one did, that one; if nobody voted, offer both. */
++function suggestSelection(votes: { slot_1: number; slot_2: number }): Selection {
++  if (votes.slot_1 > 0 && votes.slot_2 === 0) return { slot_1: true, slot_2: false };
++  if (votes.slot_2 > 0 && votes.slot_1 === 0) return { slot_1: false, slot_2: true };
++  return { slot_1: true, slot_2: true };
++}
++
+ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () => void }) {
+   const [event, setEvent] = useState<HostedEvent | null>(null);
+   const [slots, setSlots] = useState<EventCohostSlot[]>([]);
+   const [voteCounts, setVoteCounts] = useState<{ slot_1: number; slot_2: number }>({ slot_1: 0, slot_2: 0 });
+   const [loading, setLoading] = useState(true);
++  const [selection, setSelection] = useState<Selection | null>(null);
++  const [busy, setBusy] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
+ 
+   const load = async () => {
+-    setLoading(true);
+     const { data: eventData } = await supabase.from('events').select('*').eq('id', eventId).maybeSingle();
+     setEvent(eventData);
+ 
+@@ -217,7 +265,6 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+     } catch {
+       // Non-critical - vote counts just won't update this refresh
+     }
+-
+     setLoading(false);
+   };
+ 
+@@ -228,6 +275,19 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [eventId]);
+ 
++  const run = async (key: string, fn: () => Promise<unknown>) => {
++    setBusy(key);
++    setError(null);
++    try {
++      await fn();
++      await load();
++    } catch (e) {
++      setError(e instanceof Error ? e.message : 'Something went wrong.');
++    } finally {
++      setBusy(null);
++    }
++  };
++
+   if (loading && !event) {
+     return <div className="text-center py-12 text-stone-500">Loading event...</div>;
+   }
+@@ -241,6 +301,15 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+     );
+   }
+ 
++  const chosen = selection ?? suggestSelection(voteCounts);
++  const anyChosen = chosen.slot_1 || chosen.slot_2;
++  const isPosted = event.status === 'posted';
++  const slotFor = (key: 'slot_1' | 'slot_2') => slots.find((sl) => sl.slot_index === (key === 'slot_1' ? 1 : 2));
++
++  const statusTitle: Record<string, string> = {
++    draft: 'Not posted', posted: 'Posted', ready: 'Ready', started: 'In progress', concluded: 'Concluded', cancelled: 'Cancelled',
++  };
++
+   return (
+     <div className="space-y-4 max-w-lg">
+       <button onClick={onBack} className="text-stone-400 hover:text-stone-200 flex items-center gap-1 text-sm">
+@@ -249,39 +318,55 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+ 
+       <div className="flex items-center justify-between">
+         <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
+-          Double Exam &mdash; Posted
++          Double Exam &mdash; {statusTitle[event.status] || event.status}
+         </h1>
+         <button onClick={load} className="text-stone-400 hover:text-stone-200 p-1" title="Refresh">
+           <RefreshCw className="w-4 h-4" />
+         </button>
+       </div>
+ 
+-      <div className="ek-panel p-4">
+-        <h2 className="ek-section-title flex items-center gap-2"><Trophy className="w-4 h-4" /> Live Votes</h2>
+-        <div className="grid grid-cols-2 gap-3">
+-          <div className="bg-stone-800/50 rounded-md p-3 text-center">
+-            <p className="text-2xl font-bold text-amber-400">{voteCounts.slot_1}</p>
+-            <p className="text-xs text-stone-500">Citizen &rarr; Private</p>
+-          </div>
+-          <div className="bg-stone-800/50 rounded-md p-3 text-center">
+-            <p className="text-2xl font-bold text-amber-400">{voteCounts.slot_2}</p>
+-            <p className="text-xs text-stone-500">Private &rarr; Soldier</p>
++      {error && <div className="ek-panel p-3 border border-red-800/50 text-sm text-red-400">{error}</div>}
++
++      {isPosted && (
++        <div className="ek-panel p-4">
++          <h2 className="ek-section-title flex items-center gap-2"><Trophy className="w-4 h-4" /> Live Votes</h2>
++          <div className="grid grid-cols-2 gap-3">
++            {(['slot_1', 'slot_2'] as const).map((key) => (
++              <div key={key} className="bg-stone-800/50 rounded-md p-3 text-center">
++                <p className="text-2xl font-bold text-amber-400">{voteCounts[key]}</p>
++                <p className="text-xs text-stone-500">{EXAM_NAMES[key]}</p>
++              </div>
++            ))}
+           </div>
++          <p className="text-xs text-stone-500 mt-3">Auto-refreshes every 10 seconds.</p>
+         </div>
+-        <p className="text-xs text-stone-500 mt-3">
+-          Auto-refreshes every 10 seconds. Votes are informational only &mdash; you'll decide which exam(s) to run on the next screen.
+-        </p>
+-      </div>
++      )}
+ 
+       <div className="ek-panel p-4">
+         <h2 className="ek-section-title flex items-center gap-2"><Users className="w-4 h-4" /> Co-Hosts</h2>
+         <div className="space-y-2">
+           {slots.map((slot) => (
+-            <div key={slot.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
++            <div key={slot.id} className="flex items-center justify-between gap-2 p-2 bg-stone-800/50 rounded-md">
+               <span className="text-sm text-stone-300">{slot.label}</span>
+               {slot.claimed_by_discord_id ? (
+-                <span className="text-sm text-green-400 flex items-center gap-1">
+-                  <Check className="w-3.5 h-3.5" /> {formatPersonName(slot.claimed_by_discord_username, null)}
++                <span className="flex items-center gap-2">
++                  <span className="text-sm text-green-400 flex items-center gap-1">
++                    <Check className="w-3.5 h-3.5" /> {formatPersonName(slot.claimed_by_discord_username, null)}
++                  </span>
++                  {isPosted && (
++                    <button
++                      onClick={() => {
++                        if (confirm('Remove this co-host from the spot? Someone else can then claim it.')) {
++                          run(`unclaim-${slot.slot_index}`, () => callHostEvents('force-unclaim', { eventId, slotIndex: slot.slot_index }));
++                        }
++                      }}
++                      disabled={busy !== null}
++                      className="text-stone-500 hover:text-red-400 p-1"
++                      title="Force unclaim"
++                    >
++                      {busy === `unclaim-${slot.slot_index}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserMinus className="w-4 h-4" />}
++                    </button>
++                  )}
+                 </span>
+               ) : (
+                 <span className="text-xs text-stone-500">Open</span>
+@@ -291,11 +376,80 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+         </div>
+       </div>
+ 
+-      <div className="ek-panel p-4 bg-stone-900/40">
+-        <p className="text-xs text-stone-500">
+-          The "decide which exam(s) ran / start / conclude" screens come next &mdash; not built yet in this phase.
+-        </p>
+-      </div>
++      {isPosted && (
++        <div className="ek-panel p-4">
++          <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Decide &amp; Start</h2>
++          <p className="text-xs text-stone-500 mb-3">
++            Selected automatically from the votes (both if both got votes, otherwise the one that did). Change it if you want.
++          </p>
++
++          <div className="space-y-2">
++            {(['slot_1', 'slot_2'] as const).map((key) => {
++              const warnings: string[] = [];
++              if (chosen[key] && voteCounts[key] === 0) warnings.push('no votes');
++              if (chosen[key] && !slotFor(key)?.claimed_by_discord_id) warnings.push('no co-host yet');
++              return (
++                <label key={key} className="flex items-start gap-2 p-2 bg-stone-800/50 rounded-md cursor-pointer">
++                  <input
++                    type="checkbox"
++                    checked={chosen[key]}
++                    onChange={(e) => setSelection({ ...chosen, [key]: e.target.checked })}
++                    className="w-4 h-4 rounded accent-green-600 mt-0.5"
++                  />
++                  <span className="flex-1">
++                    <span className="text-sm text-stone-200">{EXAM_NAMES[key]}</span>
++                    {warnings.length > 0 && (
++                      <span className="flex items-center gap-1 text-xs text-amber-400 mt-0.5">
++                        <AlertTriangle className="w-3 h-3" /> {warnings.join(', ')}
++                      </span>
++                    )}
++                  </span>
++                </label>
++              );
++            })}
++          </div>
++
++          <button
++            onClick={() => run('start', () => callHostEvents('start-event', { eventId, activities: chosen }))}
++            disabled={busy !== null || !anyChosen}
++            className="ek-btn ek-btn-gold w-full mt-4 flex items-center justify-center gap-2"
++          >
++            {busy === 'start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
++            Start Event
++          </button>
++          <p className="text-xs text-stone-500 mt-2">
++            Posts the &ldquo;commencing&rdquo; announcement in the events channel and removes the poll and co-host request.
++          </p>
++
++          <button
++            onClick={() => {
++              if (confirm('Cancel this event? The poll and co-host request will be deleted.')) {
++                run('cancel', () => callHostEvents('cancel-event', { eventId }));
++              }
++            }}
++            disabled={busy !== null}
++            className="ek-btn ek-btn-danger w-full mt-3 flex items-center justify-center gap-2"
++          >
++            {busy === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
++            Cancel Event
++          </button>
++        </div>
++      )}
++
++      {event.status === 'started' && (
++        <div className="ek-panel p-4">
++          <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Event Started</h2>
++          <p className="text-sm text-stone-300">
++            Running:{' '}
++            {(['slot_1', 'slot_2'] as const).filter((k) => event.decided_activities?.[k]).map((k) => EXAM_NAMES[k]).join(' and ')}
++          </p>
++          <p className="text-xs text-stone-500 mt-2">The conclusion screen (passed, guards, spectators) is the next piece to build.</p>
++        </div>
++      )}
++
++      {event.status === 'cancelled' && (
++        <div className="ek-panel p-4 text-sm text-stone-400">This event was cancelled and its Discord messages were removed.</div>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/pages/Points.tsx b/src/pages/Points.tsx
+index f11cbcd..9837247 100644
+--- a/src/pages/Points.tsx
++++ b/src/pages/Points.tsx
+@@ -6,6 +6,7 @@ import {
+   Award, Search, X, Loader2, Check, Users, Plus, Trash2, Send, Settings, Save, ArrowLeft,
+ } from 'lucide-react';
+ import { formatPersonName } from '@/lib/names';
++import { callHostEvents } from '@/lib/hostEventsApi';
+ 
+ interface MassPointEntry {
+   userId: string;
+@@ -30,6 +31,27 @@ export function Points() {
+   }[]>([]);
+   const [showManageTypes, setShowManageTypes] = useState(false);
+ 
++  // Players whose Discord name matches the search (resolved via Bloxlink on the backend)
++  const [discordMatches, setDiscordMatches] = useState<Map<string, { discordDisplayName: string | null; discordUsername: string | null }>>(new Map());
++
++  useEffect(() => {
++    const q = search.trim();
++    if (q.length < 2) {
++      setDiscordMatches(new Map());
++      return;
++    }
++    const timer = setTimeout(async () => {
++      try {
++        const data = await callHostEvents<{ players: { userId: string; discordDisplayName: string | null; discordUsername: string | null }[] }>('search-players', { q });
++        setDiscordMatches(new Map(data.players.map((p) => [p.userId, p])));
++      } catch {
++        // Discord lookup is a bonus: Roblox-name search keeps working without it
++        setDiscordMatches(new Map());
++      }
++    }, 400);
++    return () => clearTimeout(timer);
++  }, [search]);
++
+   const loadEventTypes = async () => {
+     const { data } = await supabase.from('point_event_types').select('*').order('sort_order');
+     setEventTypes(data || []);
+@@ -92,7 +114,12 @@ export function Points() {
+ 
+   const filteredUsers = allUsers.filter((u) => {
+     const q = search.toLowerCase();
+-    return u.roblox_username.toLowerCase().includes(q) || (u.roblox_display_name || '').toLowerCase().includes(q);
++    return (
++      u.roblox_username.toLowerCase().includes(q) ||
++      (u.roblox_display_name || '').toLowerCase().includes(q) ||
++      (u.discord_username || '').toLowerCase().includes(q) ||
++      discordMatches.has(u.id)
++    );
+   });
+ 
+   const toggleUser = (u: DbUser) => {
+@@ -233,7 +260,7 @@ export function Points() {
+             type="text"
+             value={search}
+             onChange={(e) => setSearch(e.target.value)}
+-            placeholder="Search members by name..."
++            placeholder="Search Roblox display/username or Discord name..."
+             className="ek-input pl-9 w-full"
+           />
+         </div>
+@@ -261,7 +288,14 @@ export function Points() {
+                 ) : (
+                   <div className="w-7 h-7 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-3.5 h-3.5 text-stone-400" /></div>
+                 )}
+-                <span className="text-sm text-stone-200 flex-1 text-left">{formatPersonName(u.roblox_display_name, u.roblox_username)}</span>
++                <span className="text-sm text-stone-200 flex-1 text-left">
++                  {formatPersonName(u.roblox_display_name, u.roblox_username)}
++                  {discordMatches.get(u.id) && (
++                    <span className="block text-xs text-stone-500">
++                      Discord: {formatPersonName(discordMatches.get(u.id)!.discordDisplayName, discordMatches.get(u.id)!.discordUsername)}
++                    </span>
++                  )}
++                </span>
+                 <span className="text-xs text-stone-500">{u.group_rank_name}</span>
+               </button>
+             );
+diff --git a/supabase/functions/host-events/index.ts b/supabase/functions/host-events/index.ts
+index 953f28e..6076766 100644
+--- a/supabase/functions/host-events/index.ts
++++ b/supabase/functions/host-events/index.ts
+@@ -80,7 +80,13 @@ async function verifySessionTokenUnsafe(token: string): Promise<string> {
+ }
+ 
+ // ---------- permission check (mirrors the site's effective-permission merge) ----------
+-async function requireHost(supabase: ReturnType<typeof createClient>, userId: string) {
++// Passes if the user holds ANY of the given permissions via their own row,
++// their Roblox group rank, or their division rank. The owner always passes.
++async function requireAnyPermission(
++  supabase: ReturnType<typeof createClient>,
++  userId: string,
++  keys: string[],
++) {
+   const { data: user } = await supabase.from("users").select("*").eq("id", userId).maybeSingle();
+   if (!user) throw new HttpError(401, "Unknown user");
+   if (user.group_rank < MIN_SITE_ACCESS_RANK) throw new HttpError(403, "Rank requirement not met");
+@@ -89,21 +95,20 @@ async function requireHost(supabase: ReturnType<typeof createClient>, userId: st
+   if (isOwner) return { user, isOwner };
+ 
+   const [perms, groupPerms, member] = await Promise.all([
+-    supabase.from("user_permissions").select("can_host_events").eq("user_id", userId).maybeSingle(),
+-    supabase.from("group_rank_permissions").select("can_host_events").eq("group_rank", user.group_rank).maybeSingle(),
++    supabase.from("user_permissions").select("*").eq("user_id", userId).maybeSingle(),
++    supabase.from("group_rank_permissions").select("*").eq("group_rank", user.group_rank).maybeSingle(),
+     supabase.from("division_members").select("division_rank_id").eq("user_id", userId).maybeSingle(),
+   ]);
+ 
+-  let divisionAllows = false;
++  let divisionRank: Record<string, unknown> | null = null;
+   if (member.data?.division_rank_id) {
+     const { data: rank } = await supabase
+-      .from("division_ranks").select("can_host_events").eq("id", member.data.division_rank_id).maybeSingle();
+-    divisionAllows = !!rank?.can_host_events;
++      .from("division_ranks").select("*").eq("id", member.data.division_rank_id).maybeSingle();
++    divisionRank = rank;
+   }
+ 
+-  if (!(perms.data?.can_host_events || groupPerms.data?.can_host_events || divisionAllows)) {
+-    throw new HttpError(403, "You do not have permission to host events");
+-  }
++  const allowed = keys.some((k) => perms.data?.[k] || groupPerms.data?.[k] || divisionRank?.[k]);
++  if (!allowed) throw new HttpError(403, "You do not have permission to do that");
+   return { user, isOwner };
+ }
+ 
+@@ -127,11 +132,14 @@ Deno.serve(async (req: Request) => {
+ 
+     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+     const userId = await verifySessionToken(token);
+-    const { user, isOwner } = await requireHost(supabase, userId);
+ 
+     const body = await req.json().catch(() => ({}));
+     const action = body.action as string;
+ 
++    // Points awarders may look people up by Discord name; everything else is host-only.
++    const keys = action === "search-players" ? ["can_award_points", "can_host_events"] : ["can_host_events"];
++    const { user, isOwner } = await requireAnyPermission(supabase, userId, keys);
++
+     if (action === "search-members") {
+       const q = String(body.q || "").slice(0, 50);
+       return json(await callBot(`/members/search?q=${encodeURIComponent(q)}`));
+@@ -201,6 +209,60 @@ Deno.serve(async (req: Request) => {
+       return json({ ok: true, eventId: event.id });
+     }
+ 
++    // Loads an event and makes sure the caller may manage it (its host, or the owner)
++    const loadOwnEvent = async (eventId: string) => {
++      const { data: event } = await supabase.from("events").select("*").eq("id", eventId).maybeSingle();
++      if (!event) throw new HttpError(404, "Event not found");
++      if (event.host_user_id !== user.id && !isOwner) throw new HttpError(403, "Not your event");
++      return event;
++    };
++
++    if (action === "search-players") {
++      const q = String(body.q || "").slice(0, 50);
++      const linked = await callBot(`/members/search-linked?q=${encodeURIComponent(q)}`);
++      const ids = (linked.members || []).filter((m: { robloxId: string | null }) => m.robloxId).map((m: { robloxId: string }) => Number(m.robloxId));
++      if (ids.length === 0) return json({ players: [] });
++
++      const { data: rows } = await supabase.from("users").select("id, roblox_user_id").in("roblox_user_id", ids);
++      const players = (rows || []).map((u) => {
++        const m = linked.members.find((x: { robloxId: string }) => Number(x.robloxId) === u.roblox_user_id);
++        return { userId: u.id, discordDisplayName: m?.displayName || null, discordUsername: m?.username || null };
++      });
++      return json({ players });
++    }
++
++    if (action === "force-unclaim") {
++      const event = await loadOwnEvent(String(body.eventId || ""));
++      if (event.status !== "posted") throw new HttpError(409, "This event is no longer taking co-hosts");
++      const slotIndex = Number(body.slotIndex);
++      const { error } = await supabase.from("event_cohost_slots")
++        .update({ claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null })
++        .eq("event_id", event.id).eq("slot_index", slotIndex);
++      if (error) throw new HttpError(500, error.message);
++      await callBot(`/events/${event.id}/refresh`, { method: "POST" }).catch(() => null);
++      return json({ ok: true });
++    }
++
++    if (action === "start-event") {
++      const event = await loadOwnEvent(String(body.eventId || ""));
++      if (event.event_type !== "double_exam") throw new HttpError(400, "Unsupported event type");
++      const activities = { slot_1: !!body.activities?.slot_1, slot_2: !!body.activities?.slot_2 };
++      if (!activities.slot_1 && !activities.slot_2) throw new HttpError(400, "Pick at least one exam to run");
++      await callBot(`/events/${event.id}/start-double-exam`, { method: "POST", body: JSON.stringify({ activities }) });
++      return json({ ok: true });
++    }
++
++    if (action === "cancel-event") {
++      const event = await loadOwnEvent(String(body.eventId || ""));
++      if (!["draft", "posted"].includes(event.status)) throw new HttpError(409, "Only events that haven't started can be cancelled");
++      const { data: moved } = await supabase.from("events")
++        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
++        .eq("id", event.id).in("status", ["draft", "posted"]).select("id");
++      if (!moved || moved.length === 0) throw new HttpError(409, "Event state changed - refresh and try again");
++      await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
++      return json({ ok: true });
++    }
++
+     if (action === "vote-counts") {
+       const eventId = String(body.eventId || "");
+       const { data: event } = await supabase.from("events").select("host_user_id").eq("id", eventId).maybeSingle();
+-- 
+2.43.0
+

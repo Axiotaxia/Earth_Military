@@ -6,7 +6,7 @@ import { DiscordMemberPicker } from '@/components/DiscordMemberPicker';
 import { callHostEvents } from '@/lib/hostEventsApi';
 import { formatPersonName } from '@/lib/names';
 import {
-  Swords, Calendar, Loader2, Check, Users, ShieldAlert, ArrowLeft, RefreshCw, Trophy,
+  Swords, Calendar, Loader2, Check, Users, ShieldAlert, ArrowLeft, RefreshCw, Trophy, Play, Ban, UserMinus, AlertTriangle,
 } from 'lucide-react';
 
 type EventTypeOption = 'corporal_exam' | 'private_exam' | 'soldier_exam' | 'double_exam' | 'training';
@@ -24,6 +24,18 @@ export function HostEvents() {
   const { user } = useAuth();
   const [screen, setScreen] = useState<'pick' | 'create' | 'status'>('pick');
   const [activeEventId, setActiveEventId] = useState<string | null>(null);
+  const [myEvents, setMyEvents] = useState<HostedEvent[]>([]);
+
+  useEffect(() => {
+    if (!user || screen !== 'pick') return;
+    supabase
+      .from('events')
+      .select('*')
+      .eq('host_user_id', user.id)
+      .in('status', ['posted', 'started'])
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setMyEvents(data || []));
+  }, [user, screen]);
 
   if (!perms.can_host_events) {
     return (
@@ -81,6 +93,26 @@ export function HostEvents() {
           );
         })}
       </div>
+
+      {myEvents.length > 0 && (
+        <div className="ek-panel p-4">
+          <h2 className="ek-section-title">Your active events</h2>
+          <div className="space-y-2">
+            {myEvents.map((ev) => (
+              <button
+                key={ev.id}
+                onClick={() => { setActiveEventId(ev.id); setScreen('status'); }}
+                className="w-full flex items-center justify-between p-2 bg-stone-800/50 rounded-md hover:bg-stone-800 text-left"
+              >
+                <span className="text-sm text-stone-200">
+                  {EVENT_TYPE_LABELS[ev.event_type]} &middot; {new Date(ev.scheduled_for).toLocaleString()}
+                </span>
+                <span className="text-xs text-amber-400 capitalize">{ev.status}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,14 +226,30 @@ function CreateDoubleExamScreen({ onBack, onCreated }: { onBack: () => void; onC
   );
 }
 
+const EXAM_NAMES: Record<'slot_1' | 'slot_2', string> = {
+  slot_1: 'Citizen \u2192 Private',
+  slot_2: 'Private \u2192 Soldier',
+};
+
+type Selection = { slot_1: boolean; slot_2: boolean };
+
+/** Both exams run if both got votes; if only one did, that one; if nobody voted, offer both. */
+function suggestSelection(votes: { slot_1: number; slot_2: number }): Selection {
+  if (votes.slot_1 > 0 && votes.slot_2 === 0) return { slot_1: true, slot_2: false };
+  if (votes.slot_2 > 0 && votes.slot_1 === 0) return { slot_1: false, slot_2: true };
+  return { slot_1: true, slot_2: true };
+}
+
 function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () => void }) {
   const [event, setEvent] = useState<HostedEvent | null>(null);
   const [slots, setSlots] = useState<EventCohostSlot[]>([]);
   const [voteCounts, setVoteCounts] = useState<{ slot_1: number; slot_2: number }>({ slot_1: 0, slot_2: 0 });
   const [loading, setLoading] = useState(true);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
-    setLoading(true);
     const { data: eventData } = await supabase.from('events').select('*').eq('id', eventId).maybeSingle();
     setEvent(eventData);
 
@@ -217,7 +265,6 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
     } catch {
       // Non-critical - vote counts just won't update this refresh
     }
-
     setLoading(false);
   };
 
@@ -227,6 +274,19 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
+
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key);
+    setError(null);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong.');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   if (loading && !event) {
     return <div className="text-center py-12 text-stone-500">Loading event...</div>;
@@ -241,6 +301,15 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
     );
   }
 
+  const chosen = selection ?? suggestSelection(voteCounts);
+  const anyChosen = chosen.slot_1 || chosen.slot_2;
+  const isPosted = event.status === 'posted';
+  const slotFor = (key: 'slot_1' | 'slot_2') => slots.find((sl) => sl.slot_index === (key === 'slot_1' ? 1 : 2));
+
+  const statusTitle: Record<string, string> = {
+    draft: 'Not posted', posted: 'Posted', ready: 'Ready', started: 'In progress', concluded: 'Concluded', cancelled: 'Cancelled',
+  };
+
   return (
     <div className="space-y-4 max-w-lg">
       <button onClick={onBack} className="text-stone-400 hover:text-stone-200 flex items-center gap-1 text-sm">
@@ -249,39 +318,55 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-amber-400" style={{ fontFamily: 'Cinzel, serif' }}>
-          Double Exam &mdash; Posted
+          Double Exam &mdash; {statusTitle[event.status] || event.status}
         </h1>
         <button onClick={load} className="text-stone-400 hover:text-stone-200 p-1" title="Refresh">
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="ek-panel p-4">
-        <h2 className="ek-section-title flex items-center gap-2"><Trophy className="w-4 h-4" /> Live Votes</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-stone-800/50 rounded-md p-3 text-center">
-            <p className="text-2xl font-bold text-amber-400">{voteCounts.slot_1}</p>
-            <p className="text-xs text-stone-500">Citizen &rarr; Private</p>
+      {error && <div className="ek-panel p-3 border border-red-800/50 text-sm text-red-400">{error}</div>}
+
+      {isPosted && (
+        <div className="ek-panel p-4">
+          <h2 className="ek-section-title flex items-center gap-2"><Trophy className="w-4 h-4" /> Live Votes</h2>
+          <div className="grid grid-cols-2 gap-3">
+            {(['slot_1', 'slot_2'] as const).map((key) => (
+              <div key={key} className="bg-stone-800/50 rounded-md p-3 text-center">
+                <p className="text-2xl font-bold text-amber-400">{voteCounts[key]}</p>
+                <p className="text-xs text-stone-500">{EXAM_NAMES[key]}</p>
+              </div>
+            ))}
           </div>
-          <div className="bg-stone-800/50 rounded-md p-3 text-center">
-            <p className="text-2xl font-bold text-amber-400">{voteCounts.slot_2}</p>
-            <p className="text-xs text-stone-500">Private &rarr; Soldier</p>
-          </div>
+          <p className="text-xs text-stone-500 mt-3">Auto-refreshes every 10 seconds.</p>
         </div>
-        <p className="text-xs text-stone-500 mt-3">
-          Auto-refreshes every 10 seconds. Votes are informational only &mdash; you'll decide which exam(s) to run on the next screen.
-        </p>
-      </div>
+      )}
 
       <div className="ek-panel p-4">
         <h2 className="ek-section-title flex items-center gap-2"><Users className="w-4 h-4" /> Co-Hosts</h2>
         <div className="space-y-2">
           {slots.map((slot) => (
-            <div key={slot.id} className="flex items-center justify-between p-2 bg-stone-800/50 rounded-md">
+            <div key={slot.id} className="flex items-center justify-between gap-2 p-2 bg-stone-800/50 rounded-md">
               <span className="text-sm text-stone-300">{slot.label}</span>
               {slot.claimed_by_discord_id ? (
-                <span className="text-sm text-green-400 flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5" /> {formatPersonName(slot.claimed_by_discord_username, null)}
+                <span className="flex items-center gap-2">
+                  <span className="text-sm text-green-400 flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" /> {formatPersonName(slot.claimed_by_discord_username, null)}
+                  </span>
+                  {isPosted && (
+                    <button
+                      onClick={() => {
+                        if (confirm('Remove this co-host from the spot? Someone else can then claim it.')) {
+                          run(`unclaim-${slot.slot_index}`, () => callHostEvents('force-unclaim', { eventId, slotIndex: slot.slot_index }));
+                        }
+                      }}
+                      disabled={busy !== null}
+                      className="text-stone-500 hover:text-red-400 p-1"
+                      title="Force unclaim"
+                    >
+                      {busy === `unclaim-${slot.slot_index}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserMinus className="w-4 h-4" />}
+                    </button>
+                  )}
                 </span>
               ) : (
                 <span className="text-xs text-stone-500">Open</span>
@@ -291,11 +376,80 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
         </div>
       </div>
 
-      <div className="ek-panel p-4 bg-stone-900/40">
-        <p className="text-xs text-stone-500">
-          The "decide which exam(s) ran / start / conclude" screens come next &mdash; not built yet in this phase.
-        </p>
-      </div>
+      {isPosted && (
+        <div className="ek-panel p-4">
+          <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Decide &amp; Start</h2>
+          <p className="text-xs text-stone-500 mb-3">
+            Selected automatically from the votes (both if both got votes, otherwise the one that did). Change it if you want.
+          </p>
+
+          <div className="space-y-2">
+            {(['slot_1', 'slot_2'] as const).map((key) => {
+              const warnings: string[] = [];
+              if (chosen[key] && voteCounts[key] === 0) warnings.push('no votes');
+              if (chosen[key] && !slotFor(key)?.claimed_by_discord_id) warnings.push('no co-host yet');
+              return (
+                <label key={key} className="flex items-start gap-2 p-2 bg-stone-800/50 rounded-md cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={chosen[key]}
+                    onChange={(e) => setSelection({ ...chosen, [key]: e.target.checked })}
+                    className="w-4 h-4 rounded accent-green-600 mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="text-sm text-stone-200">{EXAM_NAMES[key]}</span>
+                    {warnings.length > 0 && (
+                      <span className="flex items-center gap-1 text-xs text-amber-400 mt-0.5">
+                        <AlertTriangle className="w-3 h-3" /> {warnings.join(', ')}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => run('start', () => callHostEvents('start-event', { eventId, activities: chosen }))}
+            disabled={busy !== null || !anyChosen}
+            className="ek-btn ek-btn-gold w-full mt-4 flex items-center justify-center gap-2"
+          >
+            {busy === 'start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            Start Event
+          </button>
+          <p className="text-xs text-stone-500 mt-2">
+            Posts the &ldquo;commencing&rdquo; announcement in the events channel and removes the poll and co-host request.
+          </p>
+
+          <button
+            onClick={() => {
+              if (confirm('Cancel this event? The poll and co-host request will be deleted.')) {
+                run('cancel', () => callHostEvents('cancel-event', { eventId }));
+              }
+            }}
+            disabled={busy !== null}
+            className="ek-btn ek-btn-danger w-full mt-3 flex items-center justify-center gap-2"
+          >
+            {busy === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+            Cancel Event
+          </button>
+        </div>
+      )}
+
+      {event.status === 'started' && (
+        <div className="ek-panel p-4">
+          <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Event Started</h2>
+          <p className="text-sm text-stone-300">
+            Running:{' '}
+            {(['slot_1', 'slot_2'] as const).filter((k) => event.decided_activities?.[k]).map((k) => EXAM_NAMES[k]).join(' and ')}
+          </p>
+          <p className="text-xs text-stone-500 mt-2">The conclusion screen (passed, guards, spectators) is the next piece to build.</p>
+        </div>
+      )}
+
+      {event.status === 'cancelled' && (
+        <div className="ek-panel p-4 text-sm text-stone-400">This event was cancelled and its Discord messages were removed.</div>
+      )}
     </div>
   );
 }

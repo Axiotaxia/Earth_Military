@@ -1,2 +1,0 @@
--  const resp = await fetch(`${BOT_API_URL}${path}`, {
-+  const resp = await fetch(`https://${BOT_API_URL}${path}`, {

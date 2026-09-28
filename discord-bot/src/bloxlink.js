@@ -6,8 +6,20 @@ import { config } from './config.js';
  * requests). Returns { robloxId, status } where status is one of:
  * 'ok' | 'not_linked' | 'not_configured' | 'error'.
  */
+const CACHE_MS = 10 * 60 * 1000;
+const cache = new Map(); // discordId -> { at, result }
+
 export async function lookupRobloxId(discordUserId) {
   if (!config.bloxlinkApiKey) return { robloxId: null, status: 'not_configured' };
+  const hit = cache.get(discordUserId);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
+  const result = await lookupUncached(discordUserId);
+  // Only remember definite answers, never transient errors
+  if (result.status === 'ok' || result.status === 'not_linked') cache.set(discordUserId, { at: Date.now(), result });
+  return result;
+}
+
+async function lookupUncached(discordUserId) {
 
   try {
     const resp = await fetch(

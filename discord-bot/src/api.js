@@ -2,8 +2,8 @@ import express from 'express';
 import { config } from './config.js';
 import { client } from './client.js';
 import { db } from './supabase.js';
-import { buildDoubleExamPollMessage } from './messages.js';
-import { buildCoHostRequestMessage } from './cohost.js';
+import { buildDoubleExamPollMessage, buildStartMessage, IS_COMPONENTS_V2 } from './messages.js';
+import { buildCoHostRequestMessage, refreshEventMessages } from './cohost.js';
 import { VOTE_EMOJI } from './reactions.js';
 import { searchMembers } from './members.js';
 import { lookupRobloxId } from './bloxlink.js';
@@ -46,10 +46,10 @@ export function createApiServer() {
         scheduledFor: new Date(event.scheduled_for),
         hostDiscordId: event.host_discord_id,
         coHostRoleLabel: 'Corporal Sergeant',
+        slots: cohostSlots,
       });
 
-      const IS_COMPONENTS_V2 = 1 << 15;
-      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2 });
+      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
 
       await sentPoll.react(VOTE_EMOJI.slot_1);
       await sentPoll.react(VOTE_EMOJI.slot_2);
@@ -109,6 +109,70 @@ export function createApiServer() {
       }
 
       res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /events/:id/refresh - re-render poll + co-host message from DB state
+  app.post('/events/:id/refresh', async (req, res) => {
+    try {
+      await refreshEventMessages(req.params.id);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /events/:id/start-double-exam {activities:{slot_1,slot_2}}
+  // Claims the posted -> started transition atomically (so a double click can't
+  // post twice), announces the start, then removes the poll + co-host messages.
+  app.post('/events/:id/start-double-exam', async (req, res) => {
+    const { id: eventId } = req.params;
+    let claimed = false;
+    try {
+      const activities = { slot_1: !!req.body?.activities?.slot_1, slot_2: !!req.body?.activities?.slot_2 };
+      if (!activities.slot_1 && !activities.slot_2) return res.status(400).json({ error: 'Pick at least one exam' });
+
+      const moved = await db.update('events', `id=eq.${eventId}&status=eq.posted`, {
+        status: 'started',
+        started_at: new Date().toISOString(),
+        decided_activities: activities,
+      });
+      if (moved.length === 0) return res.status(409).json({ error: 'Event is not in a state that can be started' });
+      claimed = true;
+      const event = moved[0];
+
+      const mainGuild = await client.guilds.fetch(config.mainServerId);
+      const channel = await mainGuild.channels.fetch(config.mainEventsChannelId);
+      const sent = await channel.send({
+        content: buildStartMessage({ hostDiscordId: event.host_discord_id, activities }),
+        allowedMentions: { parse: [] },
+      });
+
+      await db.update('events', `id=eq.${eventId}`, { start_channel_id: config.mainEventsChannelId, start_message_id: sent.id });
+
+      for (const [chId, msgId] of [[event.poll_channel_id, event.poll_message_id], [event.cohost_channel_id, event.cohost_message_id]]) {
+        if (!chId || !msgId) continue;
+        const ch = await client.channels.fetch(chId).catch(() => null);
+        const msg = ch ? await ch.messages.fetch(msgId).catch(() => null) : null;
+        if (msg) await msg.delete().catch(() => null);
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('start-double-exam failed:', err);
+      // If we claimed the transition but couldn't announce, let the host retry
+      if (claimed) await db.update('events', `id=eq.${eventId}`, { status: 'posted', started_at: null, decided_activities: null }).catch(() => null);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /members/search-linked?q=  - members plus their Bloxlink-linked Roblox ID
+  app.get('/members/search-linked', async (req, res) => {
+    try {
+      const found = await searchMembers((req.query.q || '').toString(), 8);
+      const members = await Promise.all(found.map(async (m) => ({ ...m, robloxId: (await lookupRobloxId(m.discordId)).robloxId })));
+      res.json({ members });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

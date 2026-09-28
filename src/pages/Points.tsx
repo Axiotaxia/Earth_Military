@@ -6,6 +6,7 @@ import {
   Award, Search, X, Loader2, Check, Users, Plus, Trash2, Send, Settings, Save, ArrowLeft,
 } from 'lucide-react';
 import { formatPersonName } from '@/lib/names';
+import { callHostEvents } from '@/lib/hostEventsApi';
 
 interface MassPointEntry {
   userId: string;
@@ -29,6 +30,27 @@ export function Points() {
     user_id: string; points: number; reason: string; created_at: string; recipient: DbUser | null; awarder: DbUser | null;
   }[]>([]);
   const [showManageTypes, setShowManageTypes] = useState(false);
+
+  // Players whose Discord name matches the search (resolved via Bloxlink on the backend)
+  const [discordMatches, setDiscordMatches] = useState<Map<string, { discordDisplayName: string | null; discordUsername: string | null }>>(new Map());
+
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) {
+      setDiscordMatches(new Map());
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const data = await callHostEvents<{ players: { userId: string; discordDisplayName: string | null; discordUsername: string | null }[] }>('search-players', { q });
+        setDiscordMatches(new Map(data.players.map((p) => [p.userId, p])));
+      } catch {
+        // Discord lookup is a bonus: Roblox-name search keeps working without it
+        setDiscordMatches(new Map());
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const loadEventTypes = async () => {
     const { data } = await supabase.from('point_event_types').select('*').order('sort_order');
@@ -92,7 +114,12 @@ export function Points() {
 
   const filteredUsers = allUsers.filter((u) => {
     const q = search.toLowerCase();
-    return u.roblox_username.toLowerCase().includes(q) || (u.roblox_display_name || '').toLowerCase().includes(q);
+    return (
+      u.roblox_username.toLowerCase().includes(q) ||
+      (u.roblox_display_name || '').toLowerCase().includes(q) ||
+      (u.discord_username || '').toLowerCase().includes(q) ||
+      discordMatches.has(u.id)
+    );
   });
 
   const toggleUser = (u: DbUser) => {
@@ -233,7 +260,7 @@ export function Points() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search members by name..."
+            placeholder="Search Roblox display/username or Discord name..."
             className="ek-input pl-9 w-full"
           />
         </div>
@@ -261,7 +288,14 @@ export function Points() {
                 ) : (
                   <div className="w-7 h-7 rounded-full bg-stone-700 flex items-center justify-center"><Users className="w-3.5 h-3.5 text-stone-400" /></div>
                 )}
-                <span className="text-sm text-stone-200 flex-1 text-left">{formatPersonName(u.roblox_display_name, u.roblox_username)}</span>
+                <span className="text-sm text-stone-200 flex-1 text-left">
+                  {formatPersonName(u.roblox_display_name, u.roblox_username)}
+                  {discordMatches.get(u.id) && (
+                    <span className="block text-xs text-stone-500">
+                      Discord: {formatPersonName(discordMatches.get(u.id)!.discordDisplayName, discordMatches.get(u.id)!.discordUsername)}
+                    </span>
+                  )}
+                </span>
                 <span className="text-xs text-stone-500">{u.group_rank_name}</span>
               </button>
             );
