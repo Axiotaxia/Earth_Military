@@ -1,0 +1,64 @@
+From 25d983331e8ea53d9396672826c804b01b2086a2 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 29 Sep 2026 23:06:10 +0000
+Subject: [PATCH] Always show DisplayName (@username) so the exact username is
+ visible
+
+formatPersonName previously hid the username whenever it looked similar to the display name, and never showed the @ symbol. Now it always shows both when both exist, e.g. 'Johnny (@JohnDoe123)'. Also fixed the member profile modal header, which was hardcoded to display-name-only instead of using this shared formatter.
+
+v24
+---
+ src/lib/names.ts      | 11 ++++++++---
+ src/lib/version.ts    |  2 +-
+ src/pages/Members.tsx |  3 +--
+ 3 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/src/lib/names.ts b/src/lib/names.ts
+index 422139d..b894c5b 100644
+--- a/src/lib/names.ts
++++ b/src/lib/names.ts
+@@ -1,7 +1,12 @@
+-/** "DisplayName (username)", or just the name when both are identical/missing. */
++/**
++ * "DisplayName (@username)" — always shows both when both exist, so the
++ * exact @username is visible even when it looks similar to the display name.
++ * Falls back to whichever one is available if only one exists.
++ */
+ export function formatPersonName(displayName: string | null | undefined, username: string | null | undefined): string {
+   const d = (displayName || '').trim();
+   const u = (username || '').trim();
+-  if (d && u && d.toLowerCase() !== u.toLowerCase()) return `${d} (${u})`;
+-  return d || u || 'Unknown';
++  if (d && u) return `${d} (@${u})`;
++  if (u) return `@${u}`;
++  return d || 'Unknown';
+ }
+diff --git a/src/lib/version.ts b/src/lib/version.ts
+index 898328a..3d2816e 100644
+--- a/src/lib/version.ts
++++ b/src/lib/version.ts
+@@ -3,5 +3,5 @@
+  * whether the live site has actually picked up the latest deploy. Shown in
+  * the sidebar footer.
+  */
+-export const SITE_VERSION = 'v23';
++export const SITE_VERSION = 'v24';
+ export const SITE_VERSION_DATE = '2026-09-21';
+diff --git a/src/pages/Members.tsx b/src/pages/Members.tsx
+index e92e16a..7ff1182 100644
+--- a/src/pages/Members.tsx
++++ b/src/pages/Members.tsx
+@@ -394,9 +394,8 @@ function MemberModal({
+           )}
+           <div>
+             <h3 className="text-lg font-semibold text-stone-100">
+-              {member.roblox_display_name || member.roblox_username}
++              {formatPersonName(member.roblox_display_name, member.roblox_username)}
+             </h3>
+-            <p className="text-sm text-stone-500">@{member.roblox_username}</p>
+           </div>
+         </div>
+ 
+-- 
+2.43.0
+

@@ -394,9 +394,8 @@ function MemberModal({
           )}
           <div>
             <h3 className="text-lg font-semibold text-stone-100">
-              {member.roblox_display_name || member.roblox_username}
+              {formatPersonName(member.roblox_display_name, member.roblox_username)}
             </h3>
-            <p className="text-sm text-stone-500">@{member.roblox_username}</p>
           </div>
         </div>
 
