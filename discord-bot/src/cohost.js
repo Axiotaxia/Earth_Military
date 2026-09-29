@@ -86,12 +86,20 @@ export async function handleCoHostClaim(interaction) {
     return;
   }
 
-  // Only spots on events that are still open count (finished events don't lock you out)
-  const active = await db.select(
+  // Only spots on events that are still open count (cancelled/concluded events
+  // clear their claims, but this is a second layer of defense in case that
+  // cleanup was ever skipped for an older event).
+  const claimedSlots = await db.select(
     'event_cohost_slots',
-    `claimed_by_discord_id=eq.${interaction.user.id}&select=id,events!inner(status)&events.status=in.(${OPEN_STATUSES})`,
+    `claimed_by_discord_id=eq.${interaction.user.id}&select=event_id`,
   );
-  if (active.length > 0) {
+  let hasOpenClaim = false;
+  if (claimedSlots.length > 0) {
+    const eventIds = [...new Set(claimedSlots.map((s) => s.event_id))].join(',');
+    const claimedEvents = await db.select('events', `id=in.(${eventIds})&status=in.(${OPEN_STATUSES})&select=id`);
+    hasOpenClaim = claimedEvents.length > 0;
+  }
+  if (hasOpenClaim) {
     await interaction.reply({
       content: "You're already co-hosting an event. Unclaim that spot first if you want this one.",
       ephemeral: true,

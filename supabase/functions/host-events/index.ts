@@ -259,6 +259,10 @@ Deno.serve(async (req: Request) => {
         .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
         .eq("id", event.id).in("status", ["draft", "posted"]).select("id");
       if (!moved || moved.length === 0) throw new HttpError(409, "Event state changed - refresh and try again");
+      // Clear any co-host claims so those people are free to claim other events
+      await supabase.from("event_cohost_slots")
+        .update({ claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null })
+        .eq("event_id", event.id);
       await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
       return json({ ok: true });
     }
