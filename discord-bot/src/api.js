@@ -14,16 +14,19 @@ export function createApiServer() {
 
   // Every route requires the shared secret, so only the website's Supabase
   // edge functions (which hold this secret server-side) can call this API.
+  app.get('/health', (req, res) => {
+    const routes = app._router.stack
+      .filter((layer) => layer.route)
+      .map((layer) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
+    res.json({ ok: true, botTag: client.user?.tag || null, routes });
+  });
+
   app.use((req, res, next) => {
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${config.apiSecret}`) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     next();
-  });
-
-  app.get('/health', (req, res) => {
-    res.json({ ok: true, botTag: client.user?.tag || null });
   });
 
   app.post('/events/:id/post-double-exam', async (req, res) => {

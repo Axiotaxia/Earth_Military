@@ -1,0 +1,111 @@
+From e8842efbb4b9a6cc5b2cc47d87e01d5b5409e1ca Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 29 Sep 2026 18:05:15 +0000
+Subject: [PATCH] Diagnose bot route issue; delete cancelled events outright
+ instead of soft-cancel
+
+- Bot's /health endpoint (no auth required) now lists every registered route, so you can confirm from a browser exactly what code is actually running on Railway - if start-double-exam isn't in that list, the deployed bot is still stale
+- Cancel now deletes the event row entirely rather than marking it cancelled; event_cohost_slots and event_poll_votes cascade-delete with it, immediately freeing any co-host claims and avoiding leftover rows
+- Frontend: cleaner 'event no longer exists' message after cancelling, removed now-unreachable cancelled-status UI block
+- v23
+---
+ discord-bot/src/api.js                  | 11 +++++++----
+ src/lib/version.ts                      |  2 +-
+ src/pages/HostEvents.tsx                |  7 ++-----
+ supabase/functions/host-events/index.ts | 15 +++++++--------
+ 4 files changed, 17 insertions(+), 18 deletions(-)
+
+diff --git a/discord-bot/src/api.js b/discord-bot/src/api.js
+index 1f71fe8..6a951df 100644
+--- a/discord-bot/src/api.js
++++ b/discord-bot/src/api.js
+@@ -14,6 +14,13 @@ export function createApiServer() {
+ 
+   // Every route requires the shared secret, so only the website's Supabase
+   // edge functions (which hold this secret server-side) can call this API.
++  app.get('/health', (req, res) => {
++    const routes = app._router.stack
++      .filter((layer) => layer.route)
++      .map((layer) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
++    res.json({ ok: true, botTag: client.user?.tag || null, routes });
++  });
++
+   app.use((req, res, next) => {
+     const auth = req.headers.authorization;
+     if (auth !== `Bearer ${config.apiSecret}`) {
+@@ -22,10 +29,6 @@ export function createApiServer() {
+     next();
+   });
+ 
+-  app.get('/health', (req, res) => {
+-    res.json({ ok: true, botTag: client.user?.tag || null });
+-  });
+-
+   app.post('/events/:id/post-double-exam', async (req, res) => {
+     try {
+       const { id: eventId } = req.params;
+diff --git a/src/lib/version.ts b/src/lib/version.ts
+index 613bf72..898328a 100644
+--- a/src/lib/version.ts
++++ b/src/lib/version.ts
+@@ -3,5 +3,5 @@
+  * whether the live site has actually picked up the latest deploy. Shown in
+  * the sidebar footer.
+  */
+-export const SITE_VERSION = 'v22';
++export const SITE_VERSION = 'v23';
+ export const SITE_VERSION_DATE = '2026-09-21';
+diff --git a/src/pages/HostEvents.tsx b/src/pages/HostEvents.tsx
+index e52fb60..e7cfb23 100644
+--- a/src/pages/HostEvents.tsx
++++ b/src/pages/HostEvents.tsx
+@@ -295,8 +295,8 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+   if (!event) {
+     return (
+       <div className="ek-panel p-12 text-center">
+-        <p className="text-stone-400">Event not found.</p>
+-        <button onClick={onBack} className="ek-btn ek-btn-ghost mt-4">Back</button>
++        <p className="text-stone-400">This event no longer exists (it may have been cancelled).</p>
++        <button onClick={onBack} className="ek-btn ek-btn-ghost mt-4">Back to Host Events</button>
+       </div>
+     );
+   }
+@@ -447,9 +447,6 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
+         </div>
+       )}
+ 
+-      {event.status === 'cancelled' && (
+-        <div className="ek-panel p-4 text-sm text-stone-400">This event was cancelled and its Discord messages were removed.</div>
+-      )}
+     </div>
+   );
+ }
+diff --git a/supabase/functions/host-events/index.ts b/supabase/functions/host-events/index.ts
+index a6c8163..4cf180a 100644
+--- a/supabase/functions/host-events/index.ts
++++ b/supabase/functions/host-events/index.ts
+@@ -255,14 +255,13 @@ Deno.serve(async (req: Request) => {
+     if (action === "cancel-event") {
+       const event = await loadOwnEvent(String(body.eventId || ""));
+       if (!["draft", "posted"].includes(event.status)) throw new HttpError(409, "Only events that haven't started can be cancelled");
+-      const { data: moved } = await supabase.from("events")
+-        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+-        .eq("id", event.id).in("status", ["draft", "posted"]).select("id");
+-      if (!moved || moved.length === 0) throw new HttpError(409, "Event state changed - refresh and try again");
+-      // Clear any co-host claims so those people are free to claim other events
+-      await supabase.from("event_cohost_slots")
+-        .update({ claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null })
+-        .eq("event_id", event.id);
++
++      // Delete outright rather than soft-cancelling: a cancelled event has no
++      // further use, and event_cohost_slots/event_poll_votes cascade-delete
++      // with it, which immediately frees any co-host claims too.
++      const { error: deleteError } = await supabase.from("events").delete().eq("id", event.id).in("status", ["draft", "posted"]);
++      if (deleteError) throw new HttpError(409, "Event state changed - refresh and try again");
++
+       await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
+       return json({ ok: true });
+     }
+-- 
+2.43.0
+

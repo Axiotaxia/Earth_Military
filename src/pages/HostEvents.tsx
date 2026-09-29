@@ -295,8 +295,8 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
   if (!event) {
     return (
       <div className="ek-panel p-12 text-center">
-        <p className="text-stone-400">Event not found.</p>
-        <button onClick={onBack} className="ek-btn ek-btn-ghost mt-4">Back</button>
+        <p className="text-stone-400">This event no longer exists (it may have been cancelled).</p>
+        <button onClick={onBack} className="ek-btn ek-btn-ghost mt-4">Back to Host Events</button>
       </div>
     );
   }
@@ -447,9 +447,6 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
         </div>
       )}
 
-      {event.status === 'cancelled' && (
-        <div className="ek-panel p-4 text-sm text-stone-400">This event was cancelled and its Discord messages were removed.</div>
-      )}
     </div>
   );
 }

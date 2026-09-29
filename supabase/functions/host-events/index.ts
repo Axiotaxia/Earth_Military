@@ -255,14 +255,13 @@ Deno.serve(async (req: Request) => {
     if (action === "cancel-event") {
       const event = await loadOwnEvent(String(body.eventId || ""));
       if (!["draft", "posted"].includes(event.status)) throw new HttpError(409, "Only events that haven't started can be cancelled");
-      const { data: moved } = await supabase.from("events")
-        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
-        .eq("id", event.id).in("status", ["draft", "posted"]).select("id");
-      if (!moved || moved.length === 0) throw new HttpError(409, "Event state changed - refresh and try again");
-      // Clear any co-host claims so those people are free to claim other events
-      await supabase.from("event_cohost_slots")
-        .update({ claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null })
-        .eq("event_id", event.id);
+
+      // Delete outright rather than soft-cancelling: a cancelled event has no
+      // further use, and event_cohost_slots/event_poll_votes cascade-delete
+      // with it, which immediately frees any co-host claims too.
+      const { error: deleteError } = await supabase.from("events").delete().eq("id", event.id).in("status", ["draft", "posted"]);
+      if (deleteError) throw new HttpError(409, "Event state changed - refresh and try again");
+
       await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
       return json({ ok: true });
     }
