@@ -266,6 +266,116 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    if (action === "conclude-double-exam") {
+      const eventId = String(body.eventId || "");
+      const eventResult = await supabase.from("events").select("*").eq("id", eventId).maybeSingle();
+      const event = eventResult.data;
+      if (!event) throw new HttpError(404, "Event not found");
+      if (event.host_user_id !== user.id && !isOwner) throw new HttpError(403, "Not your event");
+      if (event.event_type !== "double_exam" || event.status !== "started") {
+        throw new HttpError(409, "This Double Exam is not in progress");
+      }
+
+      const activities = event.decided_activities || {};
+      const slot1Enabled = !!activities.slot_1;
+      const slot2Enabled = !!activities.slot_2;
+      if (!slot1Enabled && !slot2Enabled) throw new HttpError(400, "No exam was selected to run");
+
+      const normalizeIds = (value: unknown): string[] => {
+        if (!Array.isArray(value)) return [];
+        return [...new Set(value.map((v) => String(v)).filter((v) => /^\\d{15,25}$/.test(v)))];
+      };
+
+      const passed1 = normalizeIds(body.passed?.slot_1);
+      const passed2 = normalizeIds(body.passed?.slot_2);
+      const guards = normalizeIds(body.guards);
+      const spectators = normalizeIds(body.spectators);
+
+      if (!slot1Enabled && passed1.length) throw new HttpError(400, "Private exam was not run");
+      if (!slot2Enabled && passed2.length) throw new HttpError(400, "Soldier exam was not run");
+
+      const allIds = [...new Set([...passed1, ...passed2, ...guards, ...spectators])];
+      if (allIds.length > 0) {
+        const verify = await callBot("/members/verify-ids", {
+          method: "POST",
+          body: JSON.stringify({ discordIds: allIds }),
+        });
+        if ((verify.missing || []).length) {
+          throw new HttpError(400, "One or more selected members are no longer in the Main server");
+        }
+      }
+
+      const now = new Date().toISOString();
+      const claimed = await supabase.from("events")
+        .update({ conclusion_claimed_at: now })
+        .eq("id", eventId)
+        .eq("status", "started")
+        .is("conclusion_claimed_at", null)
+        .select("*")
+        .maybeSingle();
+
+      if (claimed.error) throw new HttpError(500, claimed.error.message);
+      if (!claimed.data) {
+        const existing = await supabase.from("events").select("status, conclude_message_id").eq("id", eventId).maybeSingle();
+        if (existing.data?.status === "concluded") {
+          return json({ ok: true, alreadyConcluded: true, messageId: existing.data.conclude_message_id });
+        }
+        throw new HttpError(409, "This conclusion is already being processed");
+      }
+
+      const slots = await supabase.from("event_cohost_slots").select("*").eq("event_id", eventId).order("slot_index");
+      if (slots.error) throw new HttpError(500, slots.error.message);
+      const slot1 = (slots.data || []).find((s) => s.slot_index === 1);
+      const slot2 = (slots.data || []).find((s) => s.slot_index === 2);
+
+      const rows = [
+        ...passed1.map((discordId, i) => ({ event_id: eventId, role: "passed", context_key: "slot_1", discord_id: discordId, sort_order: i })),
+        ...passed2.map((discordId, i) => ({ event_id: eventId, role: "passed", context_key: "slot_2", discord_id: discordId, sort_order: 1000 + i })),
+        ...guards.map((discordId, i) => ({ event_id: eventId, role: "guard", context_key: null, discord_id: discordId, sort_order: 2000 + i })),
+        ...spectators.map((discordId, i) => ({ event_id: eventId, role: "spectator", context_key: null, discord_id: discordId, sort_order: 3000 + i })),
+      ];
+
+      if (rows.length) {
+        const { error } = await supabase.from("event_people").insert(rows);
+        if (error) throw new HttpError(500, error.message);
+      }
+
+      const botResult = await callBot("/events/" + eventId + "/conclude-double-exam", { method: "POST" });
+      const pointRows = [];
+
+      for (const discordId of guards) {
+        const linked = await callBot("/identity/lookup", { method: "POST", body: JSON.stringify({ discordId }) }).catch(() => null);
+        if (linked?.userId) {
+          pointRows.push({ user_id: linked.userId, awarded_by: user.id, points: 2, reason: "Guarded a Double Exam", event_type: "double_exam_guard" });
+        }
+      }
+
+      for (const slot of [slot1, slot2]) {
+        if (slot?.claimed_by_roblox_user_id) {
+          pointRows.push({ user_id: slot.claimed_by_roblox_user_id, awarded_by: user.id, points: 3, reason: "Co-hosted a Double Exam", event_type: "double_exam_cohost" });
+        }
+      }
+
+      if (pointRows.length) {
+        const { error } = await supabase.from("point_transactions").insert(pointRows);
+        if (error) throw new HttpError(500, error.message);
+        await supabase.from("activity_log").insert(pointRows.map((p) => ({
+          user_id: p.user_id,
+          event_type: "points_awarded",
+          event_data: { points: p.points, reason: p.reason, awarded_by: user.id, source_event_id: eventId },
+        })));
+      }
+
+      await supabase.from("event_people").update({ points_awarded: 2 })
+        .eq("event_id", eventId).eq("role", "guard");
+      await supabase.from("events").update({
+        status: "concluded",
+        concluded_at: new Date().toISOString(),
+      }).eq("id", eventId);
+
+      return json({ ok: true, messageId: botResult.messageId, awardedGuards: guards.length, awardedCohosts: [slot1, slot2].filter(Boolean).length });
+    }
+
     if (action === "vote-counts") {
       const eventId = String(body.eventId || "");
       const { data: event } = await supabase.from("events").select("host_user_id").eq("id", eventId).maybeSingle();
