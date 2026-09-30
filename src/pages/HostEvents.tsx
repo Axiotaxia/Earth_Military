@@ -552,7 +552,7 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
             Start Event
           </button>
           <p className="text-xs text-stone-500 mt-2">
-            Posts the &ldquo;commencing&rdquo; announcement in the events channel and removes the poll and co-host request.
+            Posts the &ldquo;commencing&rdquo; announcement in the events channel. The exam poll remains visible.
           </p>
 
           <button
@@ -578,13 +578,14 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
             onConcluded={load}
           />
           <div className="ek-panel p-4">
-          <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Event Started</h2>
-          <p className="text-sm text-stone-300">
-            Running:{' '}
-            {(['slot_1', 'slot_2'] as const).filter((k) => event.decided_activities?.[k]).map((k) => EXAM_NAMES[k]).join(' and ')}
-          </p>
-          <p className="text-xs text-stone-500 mt-2">Enter the results below, then conclude the event.</p>
-        </div>
+            <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Event Started</h2>
+            <p className="text-sm text-stone-300">
+              Running:{' '}
+              {(['slot_1', 'slot_2'] as const).filter((k) => event.decided_activities?.[k]).map((k) => EXAM_NAMES[k]).join(' and ')}
+            </p>
+            <p className="text-xs text-stone-500 mt-2">Enter the results below, then conclude the event.</p>
+          </div>
+        </>
       )}
 
     </div>
