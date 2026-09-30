@@ -82,7 +82,11 @@ export function createApiServer() {
       const militaryGuild = await client.guilds.fetch(config.militaryServerId);
       const cohostChannel = await militaryGuild.channels.fetch(config.militaryCohostChannelId);
 
-      const cohostMessage = buildCoHostRequestMessage({ eventId, slots: cohostSlots });
+      const cohostMessage = buildCoHostRequestMessage({
+        eventId,
+        slots: cohostSlots,
+        hostDiscordId: event.host_discord_id,
+      });
       const sentCohost = await cohostChannel.send({ ...cohostMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
 
       await db.update('events', `id=eq.${eventId}`, {
@@ -159,13 +163,6 @@ export function createApiServer() {
       const activities = { slot_1: !!req.body?.activities?.slot_1, slot_2: !!req.body?.activities?.slot_2 };
       if (!activities.slot_1 && !activities.slot_2) return res.status(400).json({ error: 'Pick at least one exam' });
 
-      const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*&order=slot_index`);
-      for (const [key, index] of [['slot_1', 1], ['slot_2', 2]]) {
-        if (activities[key] && !slots.find((slot) => slot.slot_index === index)?.claimed_by_discord_id) {
-          return res.status(400).json({ error: 'Every selected exam must have a co-host before it can start' });
-        }
-      }
-
       const moved = await db.update('events', `id=eq.${eventId}&status=eq.posted`, {
         status: 'started',
         started_at: new Date().toISOString(),
@@ -184,10 +181,11 @@ export function createApiServer() {
 
       await db.update('events', `id=eq.${eventId}`, { start_channel_id: config.mainEventsChannelId, start_message_id: sent.id });
 
-      for (const [chId, msgId] of [[event.poll_channel_id, event.poll_message_id], [event.cohost_channel_id, event.cohost_message_id]]) {
-        if (!chId || !msgId) continue;
-        const ch = await client.channels.fetch(chId).catch(() => null);
-        const msg = ch ? await ch.messages.fetch(msgId).catch(() => null) : null;
+      // Keep the exam poll visible after the event starts. It remains the
+      // public record of the vote. Only the co-host request is closed.
+      if (event.cohost_channel_id && event.cohost_message_id) {
+        const ch = await client.channels.fetch(event.cohost_channel_id).catch(() => null);
+        const msg = ch ? await ch.messages.fetch(event.cohost_message_id).catch(() => null) : null;
         if (msg) await msg.delete().catch(() => null);
       }
       res.json({ ok: true });
