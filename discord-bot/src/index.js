@@ -1,12 +1,29 @@
 import { client, startClient } from './client.js';
-import { createApiServer } from './api.js';
+import { createApiServer, setBotReady } from './api.js';
 import { handleReactionAdd, handleReactionRemove } from './reactions.js';
 import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
 import { config } from './config.js';
 import { warmMemberCache } from './members.js';
 
-async function main() {
+// Surface anything that would otherwise kill the process silently (which is
+// exactly what an empty Railway log with no error message looks like).
+process.on('uncaughtException', (err) => console.error('Uncaught exception:', err));
+process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
+
+// Start the HTTP server immediately, before Discord login. Railway (and any
+// platform health check) expects a service to bind its port right away; if
+// that's gated behind Discord login succeeding, a slow or stuck login looks
+// identical to a crashed deploy from the outside (Bad Gateway, empty logs).
+const app = createApiServer();
+app.listen(config.port, () => {
+  console.log(`Bot HTTP API listening on port ${config.port}`);
+});
+
+async function connectDiscord() {
   await startClient();
+  setBotReady(true);
+  console.log('Discord connection ready.');
+
   await warmMemberCache().catch((err) => console.error('Member cache warm failed (is the Server Members intent enabled?):', err.message));
 
   client.on('messageReactionAdd', (reaction, user) => {
@@ -31,14 +48,11 @@ async function main() {
       });
     }
   });
-
-  const app = createApiServer();
-  app.listen(config.port, () => {
-    console.log(`Bot HTTP API listening on port ${config.port}`);
-  });
 }
 
-main().catch((err) => {
-  console.error('Fatal error starting bot:', err);
-  process.exit(1);
+connectDiscord().catch((err) => {
+  // Log but do not exit: the HTTP API (and /health) should stay reachable
+  // even if Discord login is failing, so the failure is diagnosable instead
+  // of presenting as a generic dead deployment.
+  console.error('Discord connection failed:', err);
 });

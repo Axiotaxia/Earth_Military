@@ -8,23 +8,45 @@ import { VOTE_EMOJI } from './reactions.js';
 import { searchMembers } from './members.js';
 import { lookupRobloxId } from './bloxlink.js';
 
+let botReady = false;
+export function setBotReady(value) {
+  botReady = value;
+}
+
 export function createApiServer() {
   const app = express();
   app.use(express.json());
 
-  // Every route requires the shared secret, so only the website's Supabase
-  // edge functions (which hold this secret server-side) can call this API.
+  // No auth on /health: it must be checkable from a plain browser to tell
+  // "the process is up but Discord hasn't connected yet" apart from "this
+  // deploy is completely dead", without needing to craft an authenticated
+  // request first.
   app.get('/health', (req, res) => {
     const routes = app._router.stack
       .filter((layer) => layer.route)
       .map((layer) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
-    res.json({ ok: true, botTag: client.user?.tag || null, routes });
+    res.json({
+      ok: true,
+      discordConnected: botReady,
+      botTag: client.user?.tag || null,
+      routes,
+    });
   });
 
   app.use((req, res, next) => {
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${config.apiSecret}`) {
       return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  });
+
+  // Every route below this point needs a live Discord connection. Fail with
+  // a clear message rather than a confusing Discord.js error if a request
+  // arrives during the brief window after startup before login completes.
+  app.use((req, res, next) => {
+    if (!botReady) {
+      return res.status(503).json({ error: 'Bot is still connecting to Discord - try again in a few seconds.' });
     }
     next();
   });

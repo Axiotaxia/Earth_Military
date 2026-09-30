@@ -48,8 +48,12 @@ interface RobloxTokenResponse {
 
 interface RobloxUserInfo {
   sub: string;
+  /** Roblox calls this "display name" in its OIDC userinfo response - despite the field name "name". */
   name: string;
+  /** Also the display name (Roblox's userinfo response sets this identically to `name`). */
   nickname: string;
+  /** The actual unique @username. This is the field that must map to roblox_username. */
+  preferred_username: string;
   picture?: string;
 }
 
@@ -167,8 +171,8 @@ Deno.serve(async (req: Request) => {
         await supabase
           .from("users")
           .update({
-            roblox_username: userInfo.name,
-            roblox_display_name: userInfo.nickname,
+            roblox_username: userInfo.preferred_username,
+            roblox_display_name: userInfo.name,
             roblox_avatar_url: userInfo.picture,
             group_rank: groupRole.rank,
             group_rank_name: groupRole.name,
@@ -189,8 +193,8 @@ Deno.serve(async (req: Request) => {
           .from("users")
           .insert({
             roblox_user_id: robloxUserId,
-            roblox_username: userInfo.name,
-            roblox_display_name: userInfo.nickname,
+            roblox_username: userInfo.preferred_username,
+            roblox_display_name: userInfo.name,
             roblox_avatar_url: userInfo.picture,
             group_rank: groupRole.rank,
             group_rank_name: groupRole.name,
@@ -226,8 +230,8 @@ Deno.serve(async (req: Request) => {
           session_token: sessionToken,
           user_id: userId,
           roblox_user_id: robloxUserId,
-          roblox_username: userInfo.name,
-          roblox_display_name: userInfo.nickname,
+          roblox_username: userInfo.preferred_username,
+          roblox_display_name: userInfo.name,
           roblox_avatar_url: userInfo.picture,
           group_rank: groupRole.rank,
           group_rank_name: groupRole.name,

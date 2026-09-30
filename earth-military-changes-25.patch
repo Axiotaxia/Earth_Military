@@ -1,0 +1,367 @@
+From f918dcfc7735477173f58e25d1bd4dd732312925 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Wed, 30 Sep 2026 20:53:18 +0000
+Subject: [PATCH] Fix real bug: roblox_username was actually storing the
+ display name
+
+Roblox's OAuth userinfo response uses OIDC-standard claim names that don't
+mean what they sound like: 'name' and 'nickname' are both the DISPLAY name;
+the real unique @username is 'preferred_username'. roblox-oauth had name ->
+roblox_username and nickname -> roblox_display_name, so every user's stored
+username was actually their display name duplicated - the real username was
+never captured. This is why display-name search worked and username search
+never could: there was no real username anywhere to search.
+
+- Fixed the field mapping in roblox-oauth for all future logins
+- Added backfill-roblox-usernames, a one-time function that repairs every
+  existing user's row via Roblox's public Users API (looks up the real
+  username from their already-known roblox_user_id). Only touches rows where
+  username currently equals display name (the bug's exact symptom). Safe to
+  run more than once. Delete this function after running it once.
+
+Also: bot's discord.js 'ready' event can hang forever with zero log output if
+the Server Members privileged intent is requested but not actually enabled
+in the Developer Portal - which reads as a crashed/hung Railway deploy
+(exactly what was reported: empty logs, then Bad Gateway). Fixed:
+- HTTP server now starts immediately, independent of Discord login, so
+  Railway's health check has something to hit right away and /health stays
+  reachable even while Discord is still connecting or has failed entirely
+- Added a 30s timeout around the 'ready' wait so a stuck intent produces a
+  clear, loud error naming the likely cause instead of hanging silently
+- /health now reports discordConnected: true/false
+- Routes that need Discord return a clear 503 instead of failing obscurely
+  if hit during the brief window before login completes
+- Added global uncaughtException/unhandledRejection logging so nothing dies
+  silently again
+
+v25
+---
+ discord-bot/src/api.js                        |  28 ++++-
+ discord-bot/src/client.js                     |  20 +++-
+ discord-bot/src/index.js                      |  34 ++++--
+ src/lib/version.ts                            |   2 +-
+ .../backfill-roblox-usernames/index.ts        | 108 ++++++++++++++++++
+ supabase/functions/roblox-oauth/index.ts      |  16 ++-
+ 6 files changed, 187 insertions(+), 21 deletions(-)
+ create mode 100644 supabase/functions/backfill-roblox-usernames/index.ts
+
+diff --git a/discord-bot/src/api.js b/discord-bot/src/api.js
+index 6a951df..8239ce4 100644
+--- a/discord-bot/src/api.js
++++ b/discord-bot/src/api.js
+@@ -8,17 +8,29 @@ import { VOTE_EMOJI } from './reactions.js';
+ import { searchMembers } from './members.js';
+ import { lookupRobloxId } from './bloxlink.js';
+ 
++let botReady = false;
++export function setBotReady(value) {
++  botReady = value;
++}
++
+ export function createApiServer() {
+   const app = express();
+   app.use(express.json());
+ 
+-  // Every route requires the shared secret, so only the website's Supabase
+-  // edge functions (which hold this secret server-side) can call this API.
++  // No auth on /health: it must be checkable from a plain browser to tell
++  // "the process is up but Discord hasn't connected yet" apart from "this
++  // deploy is completely dead", without needing to craft an authenticated
++  // request first.
+   app.get('/health', (req, res) => {
+     const routes = app._router.stack
+       .filter((layer) => layer.route)
+       .map((layer) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
+-    res.json({ ok: true, botTag: client.user?.tag || null, routes });
++    res.json({
++      ok: true,
++      discordConnected: botReady,
++      botTag: client.user?.tag || null,
++      routes,
++    });
+   });
+ 
+   app.use((req, res, next) => {
+@@ -29,6 +41,16 @@ export function createApiServer() {
+     next();
+   });
+ 
++  // Every route below this point needs a live Discord connection. Fail with
++  // a clear message rather than a confusing Discord.js error if a request
++  // arrives during the brief window after startup before login completes.
++  app.use((req, res, next) => {
++    if (!botReady) {
++      return res.status(503).json({ error: 'Bot is still connecting to Discord - try again in a few seconds.' });
++    }
++    next();
++  });
++
+   app.post('/events/:id/post-double-exam', async (req, res) => {
+     try {
+       const { id: eventId } = req.params;
+diff --git a/discord-bot/src/client.js b/discord-bot/src/client.js
+index 36944da..eff83a6 100644
+--- a/discord-bot/src/client.js
++++ b/discord-bot/src/client.js
+@@ -14,8 +14,26 @@ export const client = new Client({
+   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+ });
+ 
++const READY_TIMEOUT_MS = 30_000;
++
+ export async function startClient() {
+   await client.login(config.discordToken);
+-  await new Promise((resolve) => client.once('ready', resolve));
++
++  // If GuildMembers (a privileged intent) is requested above but not actually
++  // enabled for the bot in the Discord Developer Portal, Discord silently
++  // refuses the gateway connection and 'ready' never fires - with no error
++  // anywhere. A timeout turns that into a clear, loud failure instead of a
++  // deploy that hangs forever with empty logs.
++  await Promise.race([
++    new Promise((resolve) => client.once('ready', resolve)),
++    new Promise((_, reject) => setTimeout(
++      () => reject(new Error(
++        "Discord 'ready' event never fired within 30s. Check: (1) the bot token is correct and was not reset since, "
++        + '(2) Server Members Intent is enabled in the Discord Developer Portal under Bot > Privileged Gateway Intents.',
++      )),
++      READY_TIMEOUT_MS,
++    )),
++  ]);
++
+   console.log(`Discord bot logged in as ${client.user.tag}`);
+ }
+diff --git a/discord-bot/src/index.js b/discord-bot/src/index.js
+index a197c8b..00d1f38 100644
+--- a/discord-bot/src/index.js
++++ b/discord-bot/src/index.js
+@@ -1,12 +1,29 @@
+ import { client, startClient } from './client.js';
+-import { createApiServer } from './api.js';
++import { createApiServer, setBotReady } from './api.js';
+ import { handleReactionAdd, handleReactionRemove } from './reactions.js';
+ import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
+ import { config } from './config.js';
+ import { warmMemberCache } from './members.js';
+ 
+-async function main() {
++// Surface anything that would otherwise kill the process silently (which is
++// exactly what an empty Railway log with no error message looks like).
++process.on('uncaughtException', (err) => console.error('Uncaught exception:', err));
++process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
++
++// Start the HTTP server immediately, before Discord login. Railway (and any
++// platform health check) expects a service to bind its port right away; if
++// that's gated behind Discord login succeeding, a slow or stuck login looks
++// identical to a crashed deploy from the outside (Bad Gateway, empty logs).
++const app = createApiServer();
++app.listen(config.port, () => {
++  console.log(`Bot HTTP API listening on port ${config.port}`);
++});
++
++async function connectDiscord() {
+   await startClient();
++  setBotReady(true);
++  console.log('Discord connection ready.');
++
+   await warmMemberCache().catch((err) => console.error('Member cache warm failed (is the Server Members intent enabled?):', err.message));
+ 
+   client.on('messageReactionAdd', (reaction, user) => {
+@@ -31,14 +48,11 @@ async function main() {
+       });
+     }
+   });
+-
+-  const app = createApiServer();
+-  app.listen(config.port, () => {
+-    console.log(`Bot HTTP API listening on port ${config.port}`);
+-  });
+ }
+ 
+-main().catch((err) => {
+-  console.error('Fatal error starting bot:', err);
+-  process.exit(1);
++connectDiscord().catch((err) => {
++  // Log but do not exit: the HTTP API (and /health) should stay reachable
++  // even if Discord login is failing, so the failure is diagnosable instead
++  // of presenting as a generic dead deployment.
++  console.error('Discord connection failed:', err);
+ });
+diff --git a/src/lib/version.ts b/src/lib/version.ts
+index 3d2816e..1bee607 100644
+--- a/src/lib/version.ts
++++ b/src/lib/version.ts
+@@ -3,5 +3,5 @@
+  * whether the live site has actually picked up the latest deploy. Shown in
+  * the sidebar footer.
+  */
+-export const SITE_VERSION = 'v24';
++export const SITE_VERSION = 'v25';
+ export const SITE_VERSION_DATE = '2026-09-21';
+diff --git a/supabase/functions/backfill-roblox-usernames/index.ts b/supabase/functions/backfill-roblox-usernames/index.ts
+new file mode 100644
+index 0000000..03cd56d
+--- /dev/null
++++ b/supabase/functions/backfill-roblox-usernames/index.ts
+@@ -0,0 +1,108 @@
++import { createClient } from "npm:@supabase/supabase-js@2.57.4";
++
++/**
++ * ONE-TIME FIX. Before this, roblox-oauth mapped Roblox's OIDC "name" claim
++ * (which is actually the display name) into roblox_username, and "nickname"
++ * (also the display name) into roblox_display_name. The real @username
++ * (OIDC "preferred_username") was never captured. That mapping is now fixed
++ * for future logins; this function repairs every existing user's row using
++ * Roblox's public Users API, which can look up the real username from a
++ * user ID with no auth required.
++ *
++ * Safe to run more than once - it only touches rows where the stored
++ * username still equals the stored display name (the symptom of the bug),
++ * so already-correct rows are left alone.
++ *
++ * Delete this function after running it once successfully.
++ */
++
++const corsHeaders = {
++  "Access-Control-Allow-Origin": "*",
++  "Access-Control-Allow-Methods": "POST, OPTIONS",
++  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
++};
++
++async function getSupabaseClient() {
++  const url = Deno.env.get("SUPABASE_URL")!;
++  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
++  return createClient(url, serviceKey);
++}
++
++interface RobloxUserLookup {
++  name: string; // the real @username on this endpoint
++  displayName: string;
++}
++
++async function fetchRobloxUser(robloxUserId: number): Promise<RobloxUserLookup | null> {
++  const resp = await fetch(`https://users.roblox.com/v1/users/${robloxUserId}`);
++  if (!resp.ok) return null;
++  const data = await resp.json();
++  if (!data || !data.name) return null;
++  return { name: data.name, displayName: data.displayName || data.name };
++}
++
++Deno.serve(async (req: Request) => {
++  if (req.method === "OPTIONS") {
++    return new Response(null, { headers: corsHeaders });
++  }
++
++  try {
++    const supabase = await getSupabaseClient();
++
++    const { data: users, error } = await supabase
++      .from("users")
++      .select("id, roblox_user_id, roblox_username, roblox_display_name");
++
++    if (error) throw new Error(error.message);
++
++    const results: { id: string; before: string; after: string; status: string }[] = [];
++
++    for (const user of users || []) {
++      // Only touch rows showing the bug's symptom: username === display name
++      if (
++        !user.roblox_username ||
++        !user.roblox_display_name ||
++        user.roblox_username.toLowerCase() !== user.roblox_display_name.toLowerCase()
++      ) {
++        continue;
++      }
++
++      const before = `${user.roblox_username} / ${user.roblox_display_name}`;
++
++      const lookup = await fetchRobloxUser(user.roblox_user_id);
++      if (!lookup) {
++        results.push({ id: user.id, before, after: "SKIPPED", status: "roblox lookup failed" });
++        continue;
++      }
++
++      await supabase
++        .from("users")
++        .update({
++          roblox_username: lookup.name,
++          roblox_display_name: lookup.displayName,
++          updated_at: new Date().toISOString(),
++        })
++        .eq("id", user.id);
++
++      results.push({
++        id: user.id,
++        before,
++        after: `${lookup.name} / ${lookup.displayName}`,
++        status: "updated",
++      });
++
++      // Be polite to Roblox's public API - small delay between requests
++      await new Promise((resolve) => setTimeout(resolve, 150));
++    }
++
++    return new Response(
++      JSON.stringify({ ok: true, checked: (users || []).length, changed: results.length, results }),
++      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
++    );
++  } catch (error) {
++    return new Response(
++      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
++      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
++    );
++  }
++});
+diff --git a/supabase/functions/roblox-oauth/index.ts b/supabase/functions/roblox-oauth/index.ts
+index 12b966b..79ac047 100644
+--- a/supabase/functions/roblox-oauth/index.ts
++++ b/supabase/functions/roblox-oauth/index.ts
+@@ -48,8 +48,12 @@ interface RobloxTokenResponse {
+ 
+ interface RobloxUserInfo {
+   sub: string;
++  /** Roblox calls this "display name" in its OIDC userinfo response - despite the field name "name". */
+   name: string;
++  /** Also the display name (Roblox's userinfo response sets this identically to `name`). */
+   nickname: string;
++  /** The actual unique @username. This is the field that must map to roblox_username. */
++  preferred_username: string;
+   picture?: string;
+ }
+ 
+@@ -167,8 +171,8 @@ Deno.serve(async (req: Request) => {
+         await supabase
+           .from("users")
+           .update({
+-            roblox_username: userInfo.name,
+-            roblox_display_name: userInfo.nickname,
++            roblox_username: userInfo.preferred_username,
++            roblox_display_name: userInfo.name,
+             roblox_avatar_url: userInfo.picture,
+             group_rank: groupRole.rank,
+             group_rank_name: groupRole.name,
+@@ -189,8 +193,8 @@ Deno.serve(async (req: Request) => {
+           .from("users")
+           .insert({
+             roblox_user_id: robloxUserId,
+-            roblox_username: userInfo.name,
+-            roblox_display_name: userInfo.nickname,
++            roblox_username: userInfo.preferred_username,
++            roblox_display_name: userInfo.name,
+             roblox_avatar_url: userInfo.picture,
+             group_rank: groupRole.rank,
+             group_rank_name: groupRole.name,
+@@ -226,8 +230,8 @@ Deno.serve(async (req: Request) => {
+           session_token: sessionToken,
+           user_id: userId,
+           roblox_user_id: robloxUserId,
+-          roblox_username: userInfo.name,
+-          roblox_display_name: userInfo.nickname,
++          roblox_username: userInfo.preferred_username,
++          roblox_display_name: userInfo.name,
+           roblox_avatar_url: userInfo.picture,
+           group_rank: groupRole.rank,
+           group_rank_name: groupRole.name,
+-- 
+2.43.0
+

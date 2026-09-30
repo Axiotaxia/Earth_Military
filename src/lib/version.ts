@@ -3,5 +3,5 @@
  * whether the live site has actually picked up the latest deploy. Shown in
  * the sidebar footer.
  */
-export const SITE_VERSION = 'v24';
+export const SITE_VERSION = 'v25';
 export const SITE_VERSION_DATE = '2026-09-21';
