@@ -74,6 +74,73 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
   };
 }
 
+function button(label, customId, disabled = false) {
+  return { type: 1, components: [{ type: 2, style: 3, label, custom_id: customId, disabled }] };
+}
+
+/** Exact Components V2 co-host request layout supplied for Double Exam. */
+export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [] }) {
+  const getSlot = (index) => slots.find((slot) => slot.slot_index === index);
+  const slot1 = getSlot(1);
+  const slot2 = getSlot(2);
+  return {
+    components: [container([
+      textDisplay('# **__Double Exam__**'),
+      textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
+      separator(),
+      textDisplay('### Citizen -> Private'),
+      textDisplay('Claimed by : ' + (slot1?.claimed_by_discord_id ? '<@' + slot1.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
+      button('Claim', 'cohost_claim:' + eventId + ':1', !!slot1?.claimed_by_discord_id),
+      separator(),
+      textDisplay('### Private -> Soldier'),
+      textDisplay('Claimed by : ' + (slot2?.claimed_by_discord_id ? '<@' + slot2.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
+      button('Claim', 'cohost_claim:' + eventId + ':2', !!slot2?.claimed_by_discord_id),
+    ])],
+  };
+}
+
+/** Exact Components V2 conclusion layout supplied for Double Exam. */
+export function buildDoubleExamConclusionMessage({
+  hostDiscordId,
+  slot1Enabled,
+  slot2Enabled,
+  slot1Passed = [],
+  slot2Passed = [],
+  slot1Cohost,
+  slot2Cohost,
+  guards = [],
+  spectators = [],
+}) {
+  const mentionList = (ids) => ids.length ? ids.map((id) => '<@' + id + '>').join(', ') : 'None';
+  const components = [
+    textDisplay('# :Earth: **__Double Exam Concluded__** :Earth'),
+    textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
+    separator(),
+  ];
+  if (slot1Enabled) {
+    components.push(
+      textDisplay('## Private Exam'),
+      textDisplay('Congratulations ' + mentionList(slot1Passed) + ' on passing their exam '),
+      textDisplay('Co-Host ' + (slot1Cohost ? '<@' + slot1Cohost + '>' : 'None')),
+      separator(),
+    );
+  }
+  if (slot2Enabled) {
+    components.push(
+      textDisplay('## Soldier Exam'),
+      textDisplay('Congratulations ' + mentionList(slot2Passed) + ' on passing their exam '),
+      textDisplay('Co-Host ' + (slot2Cohost ? '<@' + slot2Cohost + '>' : 'None')),
+      separator(),
+    );
+  }
+  components.push(
+    textDisplay('Guards ' + mentionList(guards)),
+    textDisplay('Spectators ' + mentionList(spectators)),
+    textDisplay('**Glory to the Kingdom!**'),
+  );
+  return { components: [container(components)] };
+}
+
 export { relativeTimestamp, EXAM_LABELS };
 
 export const IS_COMPONENTS_V2 = 1 << 15;
