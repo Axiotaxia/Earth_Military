@@ -13,14 +13,14 @@ function textDisplay(content) {
   return { type: COMPONENT_TYPE.TEXT_DISPLAY, content };
 }
 
-function separator() {
-  return { type: COMPONENT_TYPE.SEPARATOR, divider: true, spacing: 2 };
+function separator(spacing = 2) {
+  return { type: COMPONENT_TYPE.SEPARATOR, divider: true, spacing };
 }
 
-function container(components) {
+function container(components, accentColor = CONTAINER_ACCENT_COLOR) {
   return {
     type: COMPONENT_TYPE.CONTAINER,
-    accent_color: CONTAINER_ACCENT_COLOR,
+    accent_color: accentColor,
     spoiler: false,
     components,
   };
@@ -87,7 +87,7 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
     components: [container([
       textDisplay('# **__Double Exam__**'),
       textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
-      separator(),
+      separator(1),
       textDisplay('### Citizen -> Private'),
       textDisplay('Claimed by : ' + (slot1?.claimed_by_discord_id ? '<@' + slot1.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
       button('Claim', 'cohost_claim:' + eventId + ':1', !!slot1?.claimed_by_discord_id),
@@ -95,7 +95,7 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
       textDisplay('### Private -> Soldier'),
       textDisplay('Claimed by : ' + (slot2?.claimed_by_discord_id ? '<@' + slot2.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
       button('Claim', 'cohost_claim:' + eventId + ':2', !!slot2?.claimed_by_discord_id),
-    ])],
+    ], null)],
   };
 }
 
@@ -115,7 +115,7 @@ export function buildDoubleExamConclusionMessage({
   const components = [
     textDisplay('# :Earth: **__Double Exam Concluded__** :Earth'),
     textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
-    separator(),
+    separator(2),
   ];
   if (slot1Enabled) {
     components.push(
