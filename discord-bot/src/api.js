@@ -237,6 +237,46 @@ export function createApiServer() {
   });
 
 
+
+  // POST /identity/lookup {discordId} - resolves a Main-server Discord member to its site user
+  app.post('/identity/lookup', async (req, res) => {
+    try {
+      const discordId = String(req.body?.discordId || '');
+      if (!/^\\d{15,25}$/.test(discordId)) return res.status(400).json({ error: 'Invalid Discord ID' });
+      const guild = await client.guilds.fetch(config.mainServerId);
+      const member = await guild.members.fetch(discordId).catch(() => null);
+      if (!member) return res.status(404).json({ error: 'Member not found' });
+      const { robloxId } = await lookupRobloxId(discordId);
+      if (!robloxId) return res.json({ userId: null });
+      const users = await db.select('users', 'roblox_user_id=eq.' + robloxId + '&select=id');
+      res.json({ userId: users[0]?.id || null });
+    } catch (err) {
+      console.error('identity/lookup failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /members/verify-ids {discordIds} - ensures selected conclusion members are in Main server
+  app.post('/members/verify-ids', async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.discordIds) ? [...new Set(req.body.discordIds.map(String))] : [];
+      const guild = await client.guilds.fetch(config.mainServerId);
+      const missing = [];
+      for (const id of ids) {
+        if (!/^\\d{15,25}$/.test(id)) {
+          missing.push(id);
+          continue;
+        }
+        const member = await guild.members.fetch(id).catch(() => null);
+        if (!member) missing.push(id);
+      }
+      res.json({ missing });
+    } catch (err) {
+      console.error('members/verify-ids failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /members/search-linked?q=  - members plus their Bloxlink-linked Roblox ID
   app.get('/members/search-linked', async (req, res) => {
     try {
