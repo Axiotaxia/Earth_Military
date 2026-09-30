@@ -240,6 +240,140 @@ function suggestSelection(votes: { slot_1: number; slot_2: number }): Selection 
   return { slot_1: true, slot_2: true };
 }
 
+
+type PickedMember = DiscordMemberResult;
+
+function MemberListPicker({
+  label,
+  members,
+  onAdd,
+  onRemove,
+}: {
+  label: string;
+  members: PickedMember[];
+  onAdd: (member: PickedMember) => void;
+  onRemove: (discordId: string) => void;
+}) {
+  return (
+    <div>
+      <label className="ek-label">{label}</label>
+      <DiscordMemberPicker
+        placeholder="Type a Main server name..."
+        onSelect={(member) => onAdd(member)}
+      />
+      {members.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {members.map((member) => (
+            <button
+              key={member.discordId}
+              onClick={() => onRemove(member.discordId)}
+              className="px-2 py-1 rounded bg-stone-800 border border-stone-700 text-xs text-stone-200 hover:border-red-700"
+              title="Remove"
+            >
+              {formatPersonName(member.displayName, member.username)} ×
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DoubleExamConclusionForm({
+  event,
+  slots,
+  onConcluded,
+}: {
+  event: HostedEvent;
+  slots: EventCohostSlot[];
+  onConcluded: () => Promise<void>;
+}) {
+  const enabled1 = !!event.decided_activities?.slot_1;
+  const enabled2 = !!event.decided_activities?.slot_2;
+  const [passed1, setPassed1] = useState<PickedMember[]>([]);
+  const [passed2, setPassed2] = useState<PickedMember[]>([]);
+  const [guards, setGuards] = useState<PickedMember[]>([]);
+  const [spectators, setSpectators] = useState<PickedMember[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const addUnique = (setter: React.Dispatch<React.SetStateAction<PickedMember[]>>) => (member: PickedMember) => {
+    setter((current) => current.some((m) => m.discordId === member.discordId) ? current : [...current, member]);
+  };
+  const remove = (setter: React.Dispatch<React.SetStateAction<PickedMember[]>>) => (discordId: string) => {
+    setter((current) => current.filter((m) => m.discordId !== discordId));
+  };
+
+  const conclude = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await callHostEvents('conclude-double-exam', {
+        eventId: event.id,
+        passed: {
+          slot_1: passed1.map((m) => m.discordId),
+          slot_2: passed2.map((m) => m.discordId),
+        },
+        guards: guards.map((m) => m.discordId),
+        spectators: spectators.map((m) => m.discordId),
+      });
+      await onConcluded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not conclude the event.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cohost1 = slots.find((s) => s.slot_index === 1)?.claimed_by_discord_id;
+  const cohost2 = slots.find((s) => s.slot_index === 2)?.claimed_by_discord_id;
+
+  return (
+    <div className="ek-panel p-4 space-y-4">
+      <div>
+        <h2 className="ek-section-title flex items-center gap-2"><Trophy className="w-4 h-4" /> Conclude Double Exam</h2>
+        <p className="text-xs text-stone-500">Search names from the Main server. Co-hosts are already filled from the Discord claims.</p>
+      </div>
+
+      {enabled1 && (
+        <div className="space-y-3 p-3 bg-stone-800/30 rounded-md">
+          <div>
+            <p className="text-sm font-semibold text-stone-200">Private Exam</p>
+            <p className="text-xs text-stone-500">Co-Host: {cohost1 ? 'Claimed' : 'None'}</p>
+          </div>
+          <MemberListPicker label="Passed" members={passed1} onAdd={addUnique(setPassed1)} onRemove={remove(setPassed1)} />
+        </div>
+      )}
+
+      {enabled2 && (
+        <div className="space-y-3 p-3 bg-stone-800/30 rounded-md">
+          <div>
+            <p className="text-sm font-semibold text-stone-200">Soldier Exam</p>
+            <p className="text-xs text-stone-500">Co-Host: {cohost2 ? 'Claimed' : 'None'}</p>
+          </div>
+          <MemberListPicker label="Passed" members={passed2} onAdd={addUnique(setPassed2)} onRemove={remove(setPassed2)} />
+        </div>
+      )}
+
+      <MemberListPicker label="Guards (+2 points each)" members={guards} onAdd={addUnique(setGuards)} onRemove={remove(setGuards)} />
+      <MemberListPicker label="Spectators" members={spectators} onAdd={addUnique(setSpectators)} onRemove={remove(setSpectators)} />
+
+      {error && <div className="text-sm text-red-400 bg-red-950/20 border border-red-900/40 rounded p-3">{error}</div>}
+
+      <button
+        onClick={() => {
+          if (confirm('Conclude this Double Exam? The Discord conclusion will be posted and guard/co-host points will be awarded.')) conclude();
+        }}
+        disabled={busy}
+        className="ek-btn ek-btn-gold w-full flex items-center justify-center gap-2"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+        {busy ? 'Concluding...' : 'Conclude Double Exam'}
+      </button>
+    </div>
+  );
+}
+
 function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () => void }) {
   const [event, setEvent] = useState<HostedEvent | null>(null);
   const [slots, setSlots] = useState<EventCohostSlot[]>([]);
@@ -437,13 +571,19 @@ function EventStatusScreen({ eventId, onBack }: { eventId: string; onBack: () =>
       )}
 
       {event.status === 'started' && (
-        <div className="ek-panel p-4">
+        <>
+          <DoubleExamConclusionForm
+            event={event}
+            slots={slots}
+            onConcluded={load}
+          />
+          <div className="ek-panel p-4">
           <h2 className="ek-section-title flex items-center gap-2"><Play className="w-4 h-4" /> Event Started</h2>
           <p className="text-sm text-stone-300">
             Running:{' '}
             {(['slot_1', 'slot_2'] as const).filter((k) => event.decided_activities?.[k]).map((k) => EXAM_NAMES[k]).join(' and ')}
           </p>
-          <p className="text-xs text-stone-500 mt-2">The conclusion screen (passed, guards, spectators) is the next piece to build.</p>
+          <p className="text-xs text-stone-500 mt-2">Enter the results below, then conclude the event.</p>
         </div>
       )}
 
