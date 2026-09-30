@@ -283,7 +283,7 @@ Deno.serve(async (req: Request) => {
 
       const normalizeIds = (value: unknown): string[] => {
         if (!Array.isArray(value)) return [];
-        return [...new Set(value.map((v) => String(v)).filter((v) => /^\\d{15,25}$/.test(v)))];
+        return [...new Set(value.map((v) => String(v)).filter((v) => /^\d{15,25}$/.test(v)))];
       };
 
       const passed1 = normalizeIds(body.passed?.slot_1);
