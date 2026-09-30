@@ -247,7 +247,7 @@ export function createApiServer() {
   app.post('/identity/lookup', async (req, res) => {
     try {
       const discordId = String(req.body?.discordId || '');
-      if (!/^\\d{15,25}$/.test(discordId)) return res.status(400).json({ error: 'Invalid Discord ID' });
+      if (!/^\d{15,25}$/.test(discordId)) return res.status(400).json({ error: 'Invalid Discord ID' });
       const guild = await client.guilds.fetch(config.mainServerId);
       const member = await guild.members.fetch(discordId).catch(() => null);
       if (!member) return res.status(404).json({ error: 'Member not found' });
@@ -268,7 +268,7 @@ export function createApiServer() {
       const guild = await client.guilds.fetch(config.mainServerId);
       const missing = [];
       for (const id of ids) {
-        if (!/^\\d{15,25}$/.test(id)) {
+        if (!/^\d{15,25}$/.test(id)) {
           missing.push(id);
           continue;
         }
