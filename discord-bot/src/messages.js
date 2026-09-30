@@ -7,7 +7,7 @@ const COMPONENT_TYPE = {
 };
 
 const EARTH_EMOJI = '<:Earth:1528517539070476479>';
-const CONTAINER_ACCENT_COLOR = 1795874; // matches the color used in the provided format
+const CONTAINER_ACCENT_COLOR = 1795875; // RGB(27, 103, 35)
 
 function textDisplay(content) {
   return { type: COMPONENT_TYPE.TEXT_DISPLAY, content };
@@ -145,7 +145,7 @@ export function buildDoubleExamConclusionMessage({
     textDisplay('Spectators ' + mentionList(spectators)),
     textDisplay('**Glory to the Kingdom!**'),
   );
-  return { components: [container(components, null)] };
+  return { components: [container(components)] };
 }
 
 export { relativeTimestamp, EXAM_LABELS };
