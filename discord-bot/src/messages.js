@@ -138,7 +138,7 @@ export function buildDoubleExamConclusionMessage({
     textDisplay('Spectators ' + mentionList(spectators)),
     textDisplay('**Glory to the Kingdom!**'),
   );
-  return { components: [container(components)] };
+  return { components: [container(components, null)] };
 }
 
 export { relativeTimestamp, EXAM_LABELS };
