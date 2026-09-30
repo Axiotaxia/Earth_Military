@@ -83,18 +83,25 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
   const getSlot = (index) => slots.find((slot) => slot.slot_index === index);
   const slot1 = getSlot(1);
   const slot2 = getSlot(2);
+  const coHostLine = (slot) => slot?.claimed_by_discord_id
+    ? '<@' + slot.claimed_by_discord_id + '>'
+    : 'Unclaimed';
+  const coHostButton = (slot, index) => slot?.claimed_by_discord_id
+    ? button('Unclaim', 'cohost_unclaim:' + eventId + ':' + index)
+    : button('Claim', 'cohost_claim:' + eventId + ':' + index);
+
   return {
     components: [container([
       textDisplay('# **__Double Exam__**'),
-      textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
+      textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
       separator(1),
       textDisplay('### Citizen -> Private'),
-      textDisplay('Claimed by : ' + (slot1?.claimed_by_discord_id ? '<@' + slot1.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
-      button('Claim', 'cohost_claim:' + eventId + ':1', !!slot1?.claimed_by_discord_id),
+      textDisplay('Claimed by : ' + coHostLine(slot1)),
+      coHostButton(slot1, 1),
       separator(),
       textDisplay('### Private -> Soldier'),
-      textDisplay('Claimed by : ' + (slot2?.claimed_by_discord_id ? '<@' + slot2.claimed_by_discord_id + '>' : 'CO-HOST HERE')),
-      button('Claim', 'cohost_claim:' + eventId + ':2', !!slot2?.claimed_by_discord_id),
+      textDisplay('Claimed by : ' + coHostLine(slot2)),
+      coHostButton(slot2, 2),
     ], null)],
   };
 }
