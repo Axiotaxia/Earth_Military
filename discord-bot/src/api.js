@@ -159,6 +159,13 @@ export function createApiServer() {
       const activities = { slot_1: !!req.body?.activities?.slot_1, slot_2: !!req.body?.activities?.slot_2 };
       if (!activities.slot_1 && !activities.slot_2) return res.status(400).json({ error: 'Pick at least one exam' });
 
+      const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*&order=slot_index`);
+      for (const [key, index] of [['slot_1', 1], ['slot_2', 2]]) {
+        if (activities[key] && !slots.find((slot) => slot.slot_index === index)?.claimed_by_discord_id) {
+          return res.status(400).json({ error: 'Every selected exam must have a co-host before it can start' });
+        }
+      }
+
       const moved = await db.update('events', `id=eq.${eventId}&status=eq.posted`, {
         status: 'started',
         started_at: new Date().toISOString(),
