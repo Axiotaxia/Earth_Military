@@ -2,7 +2,7 @@ import express from 'express';
 import { config } from './config.js';
 import { client } from './client.js';
 import { db } from './supabase.js';
-import { buildDoubleExamPollMessage, buildStartMessage, IS_COMPONENTS_V2 } from './messages.js';
+import { buildDoubleExamPollMessage, buildStartMessage, buildDoubleExamConclusionMessage, IS_COMPONENTS_V2 } from './messages.js';
 import { buildCoHostRequestMessage, refreshEventMessages } from './cohost.js';
 import { VOTE_EMOJI } from './reactions.js';
 import { searchMembers } from './members.js';
@@ -191,6 +191,51 @@ export function createApiServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+
+  app.post('/events/:id/conclude-double-exam', async (req, res) => {
+    const { id: eventId } = req.params;
+    try {
+      const events = await db.select('events', 'id=eq.' + eventId + '&select=*');
+      const event = events[0];
+      if (!event) return res.status(404).json({ error: 'Event not found' });
+      if (event.status !== 'started') return res.status(409).json({ error: 'Event is not in progress' });
+
+      const activities = event.decided_activities || {};
+      const people = await db.select('event_people', 'event_id=eq.' + eventId + '&select=*&order=sort_order');
+      const slots = await db.select('event_cohost_slots', 'event_id=eq.' + eventId + '&select=*&order=slot_index');
+      const passed1 = people.filter((p) => p.role === 'passed' && p.context_key === 'slot_1').map((p) => p.discord_id);
+      const passed2 = people.filter((p) => p.role === 'passed' && p.context_key === 'slot_2').map((p) => p.discord_id);
+      const guards = people.filter((p) => p.role === 'guard').map((p) => p.discord_id);
+      const spectators = people.filter((p) => p.role === 'spectator').map((p) => p.discord_id);
+      const slot1 = slots.find((s) => s.slot_index === 1);
+      const slot2 = slots.find((s) => s.slot_index === 2);
+
+      const mainGuild = await client.guilds.fetch(config.mainServerId);
+      const channel = await mainGuild.channels.fetch(config.mainEventsChannelId);
+      const message = buildDoubleExamConclusionMessage({
+        hostDiscordId: event.host_discord_id,
+        slot1Enabled: !!activities.slot_1,
+        slot2Enabled: !!activities.slot_2,
+        slot1Passed: passed1,
+        slot2Passed: passed2,
+        slot1Cohost: slot1?.claimed_by_discord_id || null,
+        slot2Cohost: slot2?.claimed_by_discord_id || null,
+        guards,
+        spectators,
+      });
+      const sent = await channel.send({ ...message, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users'] } });
+      await db.update('events', 'id=eq.' + eventId, {
+        conclude_channel_id: config.mainEventsChannelId,
+        conclude_message_id: sent.id,
+      });
+      res.json({ ok: true, messageId: sent.id });
+    } catch (err) {
+      console.error('conclude-double-exam failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // GET /members/search-linked?q=  - members plus their Bloxlink-linked Roblox ID
   app.get('/members/search-linked', async (req, res) => {
