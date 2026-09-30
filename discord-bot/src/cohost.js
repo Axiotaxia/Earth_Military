@@ -2,35 +2,14 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { client } from './client.js';
 import { db } from './supabase.js';
 import { resolveRobloxId } from './bloxlink.js';
-import { buildDoubleExamPollMessage, IS_COMPONENTS_V2 } from './messages.js';
+import { buildDoubleExamPollMessage, buildDoubleExamCoHostMessage, IS_COMPONENTS_V2 } from './messages.js';
 
 const NO_PINGS = { parse: [] };
 const OPEN_STATUSES = 'draft,posted,ready,started';
 
 /** Co-host request message: one Claim button per slot plus an Unclaim button. */
-export function buildCoHostRequestMessage({ eventId, slots }) {
-  const claimRow = new ActionRowBuilder();
-  for (const slot of slots) {
-    claimRow.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cohost_claim:${eventId}:${slot.slot_index}`)
-        .setLabel(slot.label ? `Claim: ${slot.label}` : 'Claim Co-Host')
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(!!slot.claimed_by_discord_id),
-    );
-  }
-  const unclaimRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`cohost_unclaim:${eventId}`)
-      .setLabel('Unclaim my co-host spot')
-      .setStyle(ButtonStyle.Secondary),
-  );
-
-  const lines = ['**Co-Host Requests**', ''];
-  for (const slot of slots) {
-    lines.push(`${slot.label || 'Co-Host'}: ${slot.claimed_by_discord_id ? `<@${slot.claimed_by_discord_id}>` : 'Open'}`);
-  }
-  return { content: lines.join('\n'), components: [claimRow, unclaimRow], allowedMentions: NO_PINGS };
+export function buildCoHostRequestMessage({ eventId, slots, hostDiscordId }) {
+  return buildDoubleExamCoHostMessage({ eventId, slots, hostDiscordId });
 }
 
 async function fetchMessage(channelId, messageId) {
@@ -46,7 +25,7 @@ export async function refreshEventMessages(eventId) {
   const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*&order=slot_index`);
 
   const cohostMsg = await fetchMessage(event.cohost_channel_id, event.cohost_message_id);
-  if (cohostMsg) await cohostMsg.edit(buildCoHostRequestMessage({ eventId, slots })).catch(() => null);
+  if (cohostMsg) await cohostMsg.edit({ ...buildCoHostRequestMessage({ eventId, slots, hostDiscordId: event.host_discord_id }), flags: IS_COMPONENTS_V2, allowedMentions: NO_PINGS }).catch(() => null);
 
   const pollMsg = await fetchMessage(event.poll_channel_id, event.poll_message_id);
   if (pollMsg) {
