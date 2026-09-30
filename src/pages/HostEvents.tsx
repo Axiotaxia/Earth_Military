@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { supabase, DiscordMemberResult, HostedEvent, EventCohostSlot } from '@/lib/supabase';
 import { usePermissions } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
@@ -297,7 +297,7 @@ function DoubleExamConclusionForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const addUnique = (setter: React.Dispatch<React.SetStateAction<PickedMember[]>>) => (member: PickedMember) => {
+  const addUnique = (setter: Dispatch<SetStateAction<PickedMember[]>>) => (member: PickedMember) => {
     setter((current) => current.some((m) => m.discordId === member.discordId) ? current : [...current, member]);
   };
   const remove = (setter: React.Dispatch<React.SetStateAction<PickedMember[]>>) => (discordId: string) => {
