@@ -74,7 +74,7 @@ export function createApiServer() {
         slots: cohostSlots,
       });
 
-      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users', 'roles', 'everyone'] } });
 
       await sentPoll.react(VOTE_EMOJI.slot_1);
       await sentPoll.react(VOTE_EMOJI.slot_2);
