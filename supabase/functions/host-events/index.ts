@@ -203,7 +203,10 @@ Deno.serve(async (req: Request) => {
       try {
         await callBot(`/events/${event.id}/post-double-exam`, { method: "POST" });
       } catch (e) {
-        await supabase.from("events").update({ status: "cancelled", cancelled_at: new Date().toISOString() }).eq("id", event.id);
+        // Posting can fail after Discord has already created one of the
+        // messages. Clean those messages first, then hard-delete the event.
+        await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
+        await supabase.from("events").delete().eq("id", event.id);
         throw e;
       }
       return json({ ok: true, eventId: event.id });
@@ -256,13 +259,24 @@ Deno.serve(async (req: Request) => {
       const event = await loadOwnEvent(String(body.eventId || ""));
       if (!["draft", "posted"].includes(event.status)) throw new HttpError(409, "Only events that haven't started can be cancelled");
 
-      // Delete outright rather than soft-cancelling: a cancelled event has no
-      // further use, and event_cohost_slots/event_poll_votes cascade-delete
-      // with it, which immediately frees any co-host claims too.
-      const { error: deleteError } = await supabase.from("events").delete().eq("id", event.id).in("status", ["draft", "posted"]);
-      if (deleteError) throw new HttpError(409, "Event state changed - refresh and try again");
+      // Discord cleanup must happen before the database row is deleted because
+      // the stored message IDs are needed to remove the poll/co-host request.
+      if (event.poll_channel_id || event.poll_message_id || event.cohost_channel_id || event.cohost_message_id) {
+        await callBot(`/events/${event.id}/poll`, { method: "DELETE" });
+      }
 
-      await callBot(`/events/${event.id}/poll`, { method: "DELETE" }).catch(() => null);
+      // Hard-delete the event. Its child rows (co-host slots, poll votes,
+      // people and training activities) use ON DELETE CASCADE and disappear
+      // with it, so cancelled events leave no event data behind.
+      const { data: deleted, error: deleteError } = await supabase
+        .from("events")
+        .delete()
+        .eq("id", event.id)
+        .in("status", ["draft", "posted"])
+        .select("id");
+      if (deleteError) throw new HttpError(500, deleteError.message);
+      if (!deleted?.length) throw new HttpError(409, "Event state changed - refresh and try again");
+
       return json({ ok: true });
     }
 
