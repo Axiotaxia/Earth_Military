@@ -94,7 +94,7 @@ export function createApiServer() {
         slots: cohostSlots,
         hostDiscordId: event.host_discord_id,
       });
-      const sentCohost = await cohostChannel.send({ ...cohostMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+      const sentCohost = await cohostChannel.send({ ...cohostMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users', 'roles', 'everyone'] } });
 
       await db.update('events', `id=eq.${eventId}`, {
         status: 'posted',
@@ -181,7 +181,7 @@ export function createApiServer() {
       const channel = await mainGuild.channels.fetch(config.mainEventsChannelId);
       const sent = await channel.send({
         content: buildStartMessage({ hostDiscordId: event.host_discord_id, activities }),
-        allowedMentions: { parse: [] },
+        allowedMentions: { parse: ['users', 'roles', 'everyone'] },
       });
 
       await db.update('events', `id=eq.${eventId}`, { start_channel_id: config.mainEventsChannelId, start_message_id: sent.id });
