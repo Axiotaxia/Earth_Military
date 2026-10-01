@@ -6,7 +6,7 @@ const COMPONENT_TYPE = {
   SEPARATOR: 14,
 };
 
-const EARTH_EMOJI = '<:Earth:1528517539070476479>';
+const EARTH_EMOJI = '<<:Earth:1528517539070476479>1528517539070476479>';
 const CITIZEN_ROLE = '<@&1493722878275747962>';
 const PRIVATE_ROLE = '<@&1493722852653011094>';
 const COHOST_ROLES = '<@&1493722760118145034> <@&1493722349273485424>';
@@ -95,7 +95,7 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
 
   return {
     components: [container([
-      textDisplay('# :Earth: **__Double Exam Request__** :Earth:'),
+      textDisplay('# <:Earth:1528517539070476479> **__Double Exam Request__** <:Earth:1528517539070476479>'),
       textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
       separator(2),
       textDisplay(`### :rock: | ${CITIZEN_ROLE} ➤ Private`),
