@@ -74,7 +74,7 @@ export function createApiServer() {
         slots: cohostSlots,
       });
 
-      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+      const sentPoll = await eventsChannel.send({ ...pollMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users', 'roles', 'everyone'] } });
 
       await sentPoll.react(VOTE_EMOJI.slot_1);
       await sentPoll.react(VOTE_EMOJI.slot_2);
@@ -94,7 +94,7 @@ export function createApiServer() {
         slots: cohostSlots,
         hostDiscordId: event.host_discord_id,
       });
-      const sentCohost = await cohostChannel.send({ ...cohostMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+      const sentCohost = await cohostChannel.send({ ...cohostMessage, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users', 'roles', 'everyone'] } });
 
       await db.update('events', `id=eq.${eventId}`, {
         status: 'posted',
@@ -181,7 +181,7 @@ export function createApiServer() {
       const channel = await mainGuild.channels.fetch(config.mainEventsChannelId);
       const sent = await channel.send({
         content: buildStartMessage({ hostDiscordId: event.host_discord_id, activities }),
-        allowedMentions: { parse: [] },
+        allowedMentions: { parse: ['users', 'roles', 'everyone'] },
       });
 
       await db.update('events', `id=eq.${eventId}`, { start_channel_id: config.mainEventsChannelId, start_message_id: sent.id });
@@ -234,7 +234,7 @@ export function createApiServer() {
         guards,
         spectators,
       });
-      const sent = await channel.send({ ...message, flags: IS_COMPONENTS_V2, allowedMentions: { parse: [] } });
+      const sent = await channel.send({ ...message, flags: IS_COMPONENTS_V2, allowedMentions: { parse: ['users', 'roles', 'everyone'] } });
       await db.update('events', 'id=eq.' + eventId, {
         conclude_channel_id: config.mainEventsChannelId,
         conclude_message_id: sent.id,
