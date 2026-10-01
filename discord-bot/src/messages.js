@@ -39,8 +39,8 @@ function relativeTimestamp(date) {
 }
 
 const EXAM_LABELS = {
-  slot_1: { title: ':rock: | Citizen \u27a4 Private', description: 'Answer a series of questions to the best of your ability.' },
-  slot_2: { title: ':mountain: | Private \u27a4 Soldier', description: 'Fight another private in a 1v1. Best out of 3 passes.' },
+  slot_1: { title: ':rock: | <@&1493722878275747962> \u27a4 Private', description: 'Answer a series of questions to the best of your ability.' },
+  slot_2: { title: ':mountain: | <@&1493722852653011094> \u27a4 Soldier', description: 'Fight another private in a 1v1. Best out of 3 passes.' },
 };
 
 /**
