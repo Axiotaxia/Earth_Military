@@ -70,7 +70,7 @@ export function createApiServer() {
       const pollMessage = buildDoubleExamPollMessage({
         scheduledFor: new Date(event.scheduled_for),
         hostDiscordId: event.host_discord_id,
-        coHostRoleLabel: 'Corporal Sergeant',
+        coHostRoleLabel: '<@&1493722760118145034> <@&1493722349273485424>',
         slots: cohostSlots,
       });
 
