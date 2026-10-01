@@ -95,7 +95,7 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
 
   return {
     components: [container([
-      textDisplay('# :Earth: **__Double Exam Request__** :Earth:'),
+      textDisplay('# :EK: **__Double Exam Request__** :EK:'),
       textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
       separator(2),
       textDisplay('### :rock: | Citizen ➤ Private'),
