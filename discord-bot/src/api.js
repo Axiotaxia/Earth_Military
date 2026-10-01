@@ -79,6 +79,13 @@ export function createApiServer() {
       await sentPoll.react(VOTE_EMOJI.slot_1);
       await sentPoll.react(VOTE_EMOJI.slot_2);
 
+      // Persist the poll IDs immediately so a later posting failure can still
+      // clean up the partially-created Discord message.
+      await db.update('events', `id=eq.${eventId}`, {
+        poll_channel_id: config.mainEventsChannelId,
+        poll_message_id: sentPoll.id,
+      });
+
       const militaryGuild = await client.guilds.fetch(config.militaryServerId);
       const cohostChannel = await militaryGuild.channels.fetch(config.militaryCohostChannelId);
 
@@ -91,8 +98,6 @@ export function createApiServer() {
 
       await db.update('events', `id=eq.${eventId}`, {
         status: 'posted',
-        poll_channel_id: config.mainEventsChannelId,
-        poll_message_id: sentPoll.id,
         cohost_channel_id: config.militaryCohostChannelId,
         cohost_message_id: sentCohost.id,
         posted_at: new Date().toISOString(),
