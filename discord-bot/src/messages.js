@@ -78,7 +78,7 @@ function button(label, customId, disabled = false) {
   return { type: 1, components: [{ type: 2, style: 3, label, custom_id: customId, disabled }] };
 }
 
-/** Exact Components V2 co-host request layout supplied for Double Exam. */
+/** Components V2 co-host request layout for Double Exam. */
 export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [] }) {
   const getSlot = (index) => slots.find((slot) => slot.slot_index === index);
   const slot1 = getSlot(1);
@@ -92,21 +92,21 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
 
   return {
     components: [container([
-      textDisplay('# **__Double Exam__**'),
+      textDisplay('# :Earth: **__Double Exam Request__** :Earth:'),
       textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
-      separator(1),
+      separator(2),
       textDisplay('### Citizen -> Private'),
-      textDisplay('Claimed by : ' + coHostLine(slot1)),
+      textDisplay('Claimed by: ' + coHostLine(slot1)),
       coHostButton(slot1, 1),
-      separator(),
+      separator(2),
       textDisplay('### Private -> Soldier'),
-      textDisplay('Claimed by : ' + coHostLine(slot2)),
+      textDisplay('Claimed by: ' + coHostLine(slot2)),
       coHostButton(slot2, 2),
-    ], null)],
+    ])],
   };
 }
 
-/** Exact Components V2 conclusion layout supplied for Double Exam. */
+/** Components V2 conclusion layout for Double Exam. */
 export function buildDoubleExamConclusionMessage({
   hostDiscordId,
   slot1Enabled,
@@ -120,30 +120,30 @@ export function buildDoubleExamConclusionMessage({
 }) {
   const mentionList = (ids) => ids.length ? ids.map((id) => '<@' + id + '>').join(', ') : 'None';
   const components = [
-    textDisplay('# :Earth: **__Double Exam Concluded__** :Earth'),
-    textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'HOST HERE')),
+    textDisplay('## :Earth: **__Double Exam Concluded__** :Earth:'),
+    textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
     separator(2),
   ];
   if (slot1Enabled) {
     components.push(
-      textDisplay('## Private Exam'),
+      textDisplay('### Private Exam'),
       textDisplay('Congratulations ' + mentionList(slot1Passed) + ' on passing their exam '),
       textDisplay('Co-Host ' + (slot1Cohost ? '<@' + slot1Cohost + '>' : 'None')),
-      separator(),
+      separator(2),
     );
   }
   if (slot2Enabled) {
     components.push(
-      textDisplay('## Soldier Exam'),
+      textDisplay('### Solder Exam'),
       textDisplay('Congratulations ' + mentionList(slot2Passed) + ' on passing their exam '),
       textDisplay('Co-Host ' + (slot2Cohost ? '<@' + slot2Cohost + '>' : 'None')),
-      separator(),
+      separator(2),
     );
   }
   components.push(
     textDisplay('Guards ' + mentionList(guards)),
     textDisplay('Spectators ' + mentionList(spectators)),
-    textDisplay('**Glory to the Kingdom!**'),
+    textDisplay('### Glory to the Kingdom!'),
   );
   return { components: [container(components)] };
 }
