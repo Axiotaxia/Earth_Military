@@ -7,6 +7,9 @@ const COMPONENT_TYPE = {
 };
 
 const EARTH_EMOJI = '<:Earth:1528517539070476479>';
+const CITIZEN_ROLE = '<@&1493722878275747962>';
+const PRIVATE_ROLE = '<@&1493722852653011094>';
+const COHOST_ROLES = '<@&1493722760118145034> <@&1493722349273485424>';
 const CONTAINER_ACCENT_COLOR = 1795875; // RGB(27, 103, 35)
 
 function textDisplay(content) {
@@ -50,7 +53,7 @@ export function buildDoubleExamPollMessage({ scheduledFor, hostDiscordId, coHost
   const hostLine = hostDiscordId ? `Host: <@${hostDiscordId}>` : 'Host: ';
   const coHostLine = (slotIndex) => {
     const claimed = slots.find((sl) => sl.slot_index === slotIndex)?.claimed_by_discord_id;
-    return `Co-Host: ${claimed ? `<@${claimed}>` : coHostRoleLabel}`;
+    return `Co-Host: ${claimed ? `<@${claimed}>` : COHOST_ROLES}`;
   };
 
   return {
@@ -95,11 +98,11 @@ export function buildDoubleExamCoHostMessage({ eventId, hostDiscordId, slots = [
       textDisplay('# :Earth: **__Double Exam Request__** :Earth:'),
       textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
       separator(2),
-      textDisplay('### Citizen -> Private'),
+      textDisplay(`### :rock: | ${CITIZEN_ROLE} ➤ Private`),
       textDisplay('Claimed by: ' + coHostLine(slot1)),
       coHostButton(slot1, 1),
       separator(2),
-      textDisplay('### Private -> Soldier'),
+      textDisplay(`### :mountain: | ${PRIVATE_ROLE} ➤ Soldier`),
       textDisplay('Claimed by: ' + coHostLine(slot2)),
       coHostButton(slot2, 2),
     ])],
@@ -120,7 +123,7 @@ export function buildDoubleExamConclusionMessage({
 }) {
   const mentionList = (ids) => ids.length ? ids.map((id) => '<@' + id + '>').join(', ') : 'None';
   const components = [
-    textDisplay('## :Earth: **__Double Exam Concluded__** :Earth:'),
+    textDisplay(`## ${EARTH_EMOJI} **__Double Exam Concluded__** ${EARTH_EMOJI}`),
     textDisplay('Host: ' + (hostDiscordId ? '<@' + hostDiscordId + '>' : 'Host unavailable')),
     separator(2),
   ];
@@ -153,9 +156,12 @@ export { relativeTimestamp, EXAM_LABELS };
 export const IS_COMPONENTS_V2 = 1 << 15;
 
 export function buildStartMessage({ hostDiscordId, activities }) {
-  const names = [];
-  if (activities.slot_1) names.push('Citizen \u27a4 Private');
-  if (activities.slot_2) names.push('Private \u27a4 Soldier');
-  const what = names.length === 2 ? `${names[0]} and ${names[1]} exams are` : `${names[0]} exam is`;
-  return `${EARTH_EMOJI} **${what} commencing.** DM <@${hostDiscordId}> for the link.`;
+  const host = `<@${hostDiscordId}>`;
+  if (activities.slot_1 && activities.slot_2) {
+    return `${CITIZEN_ROLE} ${PRIVATE_ROLE} Exam is starting. DM ${host} for the link`;
+  }
+  if (activities.slot_1) {
+    return `${CITIZEN_ROLE} Exam is starting. DM ${host} for the link`;
+  }
+  return `${PRIVATE_ROLE} Exam is starting. DM ${host} for the link`;
 }
