@@ -137,7 +137,7 @@ export function buildDoubleExamConclusionMessage({
   }
   if (slot2Enabled) {
     components.push(
-      textDisplay('### Solder Exam'),
+      textDisplay('### Soldier Exam'),
       textDisplay('Congratulations ' + mentionList(slot2Passed) + ' on passing their exam '),
       textDisplay('Co-Host ' + (slot2Cohost ? '<@' + slot2Cohost + '>' : 'None')),
       separator(2),
