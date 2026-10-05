@@ -20,7 +20,7 @@ export function buildVerificationMessage() {
       '**Requirements:**',
       '- You must be **Private or above** in the Earth Kingdom Roblox group.',
       '- Your Roblox account will be linked to your Discord account.',
-      '- After successful verification, your Military role and nickname will be updated automatically.',
+      '- After successful verification, your Enlisted role and nickname will be updated automatically.',
     ].join('\n'),
     components: [{
       type: 1,
@@ -101,7 +101,7 @@ export async function ensureVerificationMessage() {
 }
 
 export async function syncVerifiedMembers() {
-  if (!config.verifiedRoleId) {
+  if (!config.verificationRoleId || !config.enlistedRoleId) {
     return;
   }
 
@@ -111,15 +111,27 @@ export async function syncVerifiedMembers() {
   );
 
   const guild = await client.guilds.fetch(config.militaryServerId);
-  const role = await guild.roles.fetch(config.verifiedRoleId);
-  if (!role) throw new Error('Configured VERIFIED_ROLE_ID does not exist in the Military server.');
+  const verificationRole = await guild.roles.fetch(config.verificationRoleId);
+  const enlistedRole = await guild.roles.fetch(config.enlistedRoleId);
+
+  if (!verificationRole) {
+    throw new Error('Configured VERIFICATION_ROLE_ID does not exist in the Military server.');
+  }
+
+  if (!enlistedRole) {
+    throw new Error('Configured ENLISTED_ROLE_ID does not exist in the Military server.');
+  }
 
   for (const user of users) {
     const member = await guild.members.fetch(user.discord_id).catch(() => null);
     if (!member) continue;
 
-    if (!member.roles.cache.has(role.id)) {
-      await member.roles.add(role, 'Military account verification');
+    if (!member.roles.cache.has(enlistedRole.id)) {
+      await member.roles.add(enlistedRole, 'Military account verification');
+    }
+
+    if (member.roles.cache.has(verificationRole.id)) {
+      await member.roles.remove(verificationRole, 'Military account verification');
     }
 
     const fullUser = user.roblox_display_name || user.roblox_username;
