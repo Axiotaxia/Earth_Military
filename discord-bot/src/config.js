@@ -16,6 +16,9 @@ export const config = {
   mainEventsChannelId: required('MAIN_EVENTS_CHANNEL_ID'),
   militaryServerId: required('MILITARY_SERVER_ID'),
   militaryCohostChannelId: required('MILITARY_COHOST_REQUEST_CHANNEL_ID'),
+  militaryVerifyChannelId: process.env.MILITARY_VERIFY_CHANNEL_ID || '',
+  verifiedRoleId: process.env.VERIFIED_ROLE_ID || '',
+  verificationSiteUrl: process.env.VERIFICATION_SITE_URL || '',
 
   roleIds: {
     soldier: required('SOLDIER_ROLE_ID'),
