@@ -45,6 +45,7 @@ export function Members() {
   const [membershipByUser, setMembershipByUser] = useState<Map<string, DivisionMembership>>(new Map());
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [sortBy, setSortBy] = useState<'default' | 'total' | 'recent'>('default');
 
   useEffect(() => {
     loadMembers();
@@ -52,14 +53,19 @@ export function Members() {
 
   const loadMembers = async () => {
     setLoading(true);
-    const { data: users } = await supabase
-      .from('users')
-      .select('*')
-      .order('group_rank', { ascending: false });
-
-    const { data: divs } = await supabase.from('divisions').select('*');
-    const { data: allRanks } = await supabase.from('division_ranks').select('*');
-    const { data: allMembers } = await supabase.from('division_members').select('*');
+    const [
+      { data: users },
+      { data: divs },
+      { data: allRanks },
+      { data: allMembers },
+      { data: pointSummary },
+    ] = await Promise.all([
+      supabase.from('users').select('*').order('group_rank', { ascending: false }),
+      supabase.from('divisions').select('*'),
+      supabase.from('division_ranks').select('*'),
+      supabase.from('division_members').select('*'),
+      supabase.rpc('get_member_points_summary'),
+    ]);
 
     const divMap = new Map<string, Division>();
     divs?.forEach((d) => divMap.set(d.id, d));
@@ -72,22 +78,18 @@ export function Members() {
     const memberMap = new Map<string, { division_id: string; rank_id: string }>();
     allMembers?.forEach((m) => memberMap.set(m.user_id, { division_id: m.division_id, rank_id: m.division_rank_id }));
 
-    // Get points for all users
-    const enriched: MemberWithDetails[] = [];
-    for (const u of users || []) {
-      const [{ data: pts }, { data: recentPts }] = await Promise.all([
-        supabase.rpc('get_user_military_points', { p_user_id: u.id }),
-        supabase.rpc('get_user_recent_points', { p_user_id: u.id }),
-      ]);
+    const pointMap = new Map((pointSummary || []).map((p) => [p.user_id, p]));
+    const enriched: MemberWithDetails[] = (users || []).map((u) => {
       const memberInfo = memberMap.get(u.id);
-      enriched.push({
+      const points = pointMap.get(u.id);
+      return {
         ...u,
         division_name: memberInfo ? divMap.get(memberInfo.division_id)?.name || null : null,
         division_rank_name: memberInfo && memberInfo.rank_id ? rankMap.get(memberInfo.rank_id)?.name || null : null,
-        military_points: pts || 0,
-        recent_points: recentPts || 0,
-      });
-    }
+        military_points: Number(points?.military_points || 0),
+        recent_points: Number(points?.recent_points || 0),
+      };
+    });
 
     setMemberDivisionRankId(new Map(allMembers?.map((m) => [m.user_id, m.division_rank_id || '']) || []));
     setMembershipByUser(new Map((allMembers || []).map((m) => [m.user_id, {
@@ -101,7 +103,8 @@ export function Members() {
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
-  const filtered = useMemo(() => members.filter((m) => {
+  const filtered = useMemo(() => {
+    const result = members.filter((m) => {
     const q = search.toLowerCase();
     const matchesSearch = (
       m.roblox_username.toLowerCase().includes(q) ||
@@ -122,8 +125,17 @@ export function Members() {
     }
     if (filters.divisionRankId && memberDivisionRankId.get(m.id) !== filters.divisionRankId) return false;
 
-    return true;
-  }), [members, search, filters, divisions, memberDivisionRankId]);
+      return true;
+    });
+
+    if (sortBy === 'total') {
+      result.sort((a, b) => b.military_points - a.military_points);
+    } else if (sortBy === 'recent') {
+      result.sort((a, b) => b.recent_points - a.recent_points);
+    }
+
+    return result;
+  }, [members, search, filters, divisions, memberDivisionRankId, sortBy]);
 
   const divisionRankOptions = Array.from(ranks.values()).sort((a, b) => a.name.localeCompare(b.name));
   const divisionOptions = Array.from(divisions.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -145,6 +157,16 @@ export function Members() {
               className="ek-input pl-9 w-64"
             />
           </div>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'default' | 'total' | 'recent')}
+            className="ek-input text-sm w-44"
+            aria-label="Sort members"
+          >
+            <option value="default">Sort: Default</option>
+            <option value="total">Most Total Points</option>
+            <option value="recent">Most Recent Points</option>
+          </select>
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`ek-btn text-sm flex items-center gap-2 ${showFilters || activeFilterCount > 0 ? 'ek-btn-primary' : 'ek-btn-ghost'}`}
