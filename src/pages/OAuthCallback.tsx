@@ -16,6 +16,7 @@ export function OAuthCallback() {
 
     const code = searchParams.get('code');
     const err = searchParams.get('error');
+    const state = searchParams.get('state') || undefined;
 
     if (err) {
       setError(`Roblox authorization failed: ${err}`);
@@ -27,8 +28,8 @@ export function OAuthCallback() {
       return;
     }
 
-    handleOAuthCallback(code)
-      .then(() => navigate('/dashboard'))
+    handleOAuthCallback(code, state)
+      .then((result) => navigate(result.verification ? '/verify?success=1' : '/dashboard'))
       .catch((e) => setError(e.message || 'Authentication failed'));
   }, [searchParams, handleOAuthCallback, navigate]);
 
