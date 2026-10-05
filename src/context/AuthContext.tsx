@@ -56,8 +56,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   robloxAuthUrl: string;
-  loginWithRoblox: () => void;
-  handleOAuthCallback: (code: string) => Promise<void>;
+  loginWithRoblox: (state?: string) => void;
+  handleOAuthCallback: (code: string, state?: string) => Promise<{ verification: boolean }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -174,12 +174,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
-  const loginWithRoblox = useCallback(() => {
-    window.location.href = buildRobloxAuthUrl();
+  const loginWithRoblox = useCallback((state?: string) => {
+    const url = new URL(buildRobloxAuthUrl());
+    if (state) url.searchParams.set('state', state);
+    window.location.href = url.toString();
   }, []);
 
   const handleOAuthCallback = useCallback(
-    async (code: string) => {
+    async (code: string, state?: string) => {
       const redirectUri = `${getBaseUrl()}/redirect`;
       const funcUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/roblox-oauth`;
 
@@ -189,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
         },
-        body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        body: JSON.stringify({ code, redirect_uri: redirectUri, state: state || null }),
       });
 
       if (!resp.ok) {
@@ -205,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // of the site still works, only Host Events needs it.
       setSessionToken(data.session_token || null);
       await refreshUser();
+      return { verification: !!data.verification };
     },
     [refreshUser]
   );
