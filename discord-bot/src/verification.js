@@ -126,6 +126,9 @@ export async function syncVerifiedMembers() {
     const member = await guild.members.fetch(user.discord_id).catch(() => null);
     if (!member) continue;
 
+    // Ignore members the bot cannot manage, such as members ranked above the bot.
+    if (!member.manageable) continue;
+
     if (!member.roles.cache.has(enlistedRole.id)) {
       await member.roles.add(enlistedRole, 'Military account verification');
     }
