@@ -26,6 +26,13 @@ function b64url(input: ArrayBuffer | string): string {
  * Returns null if SESSION_SECRET isn't configured, so normal login keeps
  * working and only hosting stays unavailable until the secret is set.
  */
+
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(data)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function signSessionToken(userId: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
   const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
@@ -141,7 +148,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "authorize" || req.method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const { code, redirect_uri } = body;
+      const { code, redirect_uri, state } = body;
 
       if (!code || !redirect_uri) {
         return new Response(
@@ -151,11 +158,43 @@ Deno.serve(async (req: Request) => {
       }
 
       const tokenData = await exchangeCodeForToken(code, redirect_uri);
+
+      const supabase = await getSupabaseClient();
+      let verificationDiscordId: string | null = null;
+      let verificationDiscordUsername: string | null = null;
+      let verificationTokenRow: { id: string; discord_id: string; discord_username: string | null } | null = null;
+
+      if (state) {
+        const tokenHash = await sha256Hex(String(state));
+        const { data: verificationToken, error: verificationTokenError } = await supabase
+          .from("discord_verification_tokens")
+          .select("id, discord_id, discord_username")
+          .eq("token_hash", tokenHash)
+          .is("consumed_at", null)
+          .gt("expires_at", new Date().toISOString())
+          .maybeSingle();
+
+        if (verificationTokenError || !verificationToken) {
+          return new Response(
+            JSON.stringify({ error: "This verification link is invalid or has expired." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        verificationTokenRow = verificationToken;
+        verificationDiscordId = String(verificationToken.discord_id);
+        verificationDiscordUsername = verificationToken.discord_username || null;
+      }
       const userInfo = await getUserInfo(tokenData.access_token);
       const robloxUserId = parseInt(userInfo.sub, 10);
       const groupRole = await getUserGroupRank(userInfo.sub);
 
-      const supabase = await getSupabaseClient();
+      if (verificationDiscordId && groupRole.rank < 2) {
+        return new Response(
+          JSON.stringify({ error: "You must be Private or above in the Earth Kingdom Roblox group to verify." }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       // Upsert user
       const { data: existingUser } = await supabase
@@ -207,6 +246,42 @@ Deno.serve(async (req: Request) => {
         userId = newUser.id;
       }
 
+      if (verificationDiscordId) {
+        const { data: linkedUser, error: linkedUserError } = await supabase
+          .from("users")
+          .select("id")
+          .eq("discord_id", verificationDiscordId)
+          .neq("id", userId)
+          .maybeSingle();
+
+        if (linkedUserError) throw new Error(`Failed to check Discord link: ${linkedUserError.message}`);
+        if (linkedUser) {
+          return new Response(
+            JSON.stringify({ error: "That Discord account is already linked to another Military profile." }),
+            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const { error: linkError } = await supabase
+          .from("users")
+          .update({
+            discord_id: verificationDiscordId,
+            discord_username: verificationDiscordUsername,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", userId);
+
+        if (linkError) throw new Error(`Failed to link Discord account: ${linkError.message}`);
+
+        const { error: consumeError } = await supabase
+          .from("discord_verification_tokens")
+          .update({ consumed_at: new Date().toISOString() })
+          .eq("id", verificationTokenRow!.id)
+          .is("consumed_at", null);
+
+        if (consumeError) throw new Error(`Failed to consume verification token: ${consumeError.message}`);
+      }
+
       // Ensure owner permissions for the site owner
       if (robloxUserId === OWNER_ROBLOX_ID) {
         await supabase
@@ -235,6 +310,7 @@ Deno.serve(async (req: Request) => {
           roblox_avatar_url: userInfo.picture,
           group_rank: groupRole.rank,
           group_rank_name: groupRole.name,
+          verification: !!verificationDiscordId,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
