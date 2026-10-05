@@ -4,6 +4,7 @@ import { handleReactionAdd, handleReactionRemove } from './reactions.js';
 import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
 import { config } from './config.js';
 import { warmMemberCache } from './members.js';
+import { startRankSync } from './rankSync.js';
 
 // Surface anything that would otherwise kill the process silently (which is
 // exactly what an empty Railway log with no error message looks like).
@@ -25,6 +26,7 @@ async function connectDiscord() {
   console.log('Discord connection ready.');
 
   await warmMemberCache().catch((err) => console.error('Member cache warm failed (is the Server Members intent enabled?):', err.message));
+  startRankSync();
 
   client.on('messageReactionAdd', (reaction, user) => {
     handleReactionAdd(reaction, user).catch((err) => console.error('handleReactionAdd error:', err));
