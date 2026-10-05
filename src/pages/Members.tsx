@@ -60,7 +60,7 @@ export function Members() {
       { data: allMembers },
       { data: pointSummary },
     ] = await Promise.all([
-      supabase.from('users').select('*').order('group_rank', { ascending: false }),
+      supabase.from('users').select('id,roblox_user_id,roblox_username,roblox_display_name,roblox_avatar_url,group_rank,group_rank_name,timezone,selected_path,main_sub,discord_id,discord_username,onboarded,created_at,updated_at').order('group_rank', { ascending: false }),
       supabase.from('divisions').select('*'),
       supabase.from('division_ranks').select('*'),
       supabase.from('division_members').select('*'),
@@ -247,7 +247,7 @@ export function Members() {
                 <img
                   src={m.roblox_avatar_url}
                   alt={m.roblox_display_name || undefined}
-                  className="w-12 h-12 rounded-full border border-stone-600 flex-shrink-0"
+                  className="w-12 h-12 rounded-full border border-stone-600 flex-shrink-0"\n                  loading="lazy"
                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
               ) : (
@@ -406,7 +406,7 @@ function MemberModal({
             <img
               src={member.roblox_avatar_url}
               alt={member.roblox_display_name || undefined}
-              className="w-16 h-16 rounded-full border-2 border-amber-600/40"
+              className="w-16 h-16 rounded-full border-2 border-amber-600/40"\n              loading="lazy"
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
           ) : (
