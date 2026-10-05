@@ -5,6 +5,7 @@ import { handleCoHostClaim, handleCoHostUnclaim } from './cohost.js';
 import { config } from './config.js';
 import { warmMemberCache } from './members.js';
 import { startRankSync } from './rankSync.js';
+import { ensureVerificationMessage, handleVerificationStart, startVerificationSync } from './verification.js';
 
 // Surface anything that would otherwise kill the process silently (which is
 // exactly what an empty Railway log with no error message looks like).
@@ -27,6 +28,8 @@ async function connectDiscord() {
 
   await warmMemberCache().catch((err) => console.error('Member cache warm failed (is the Server Members intent enabled?):', err.message));
   startRankSync();
+  await ensureVerificationMessage().catch((err) => console.error('[Verification] Panel setup failed:', err.message));
+  startVerificationSync();
 
   client.on('messageReactionAdd', (reaction, user) => {
     handleReactionAdd(reaction, user).catch((err) => console.error('handleReactionAdd error:', err));
@@ -38,7 +41,14 @@ async function connectDiscord() {
 
   client.on('interactionCreate', (interaction) => {
     if (!interaction.isButton()) return;
-    if (interaction.customId.startsWith('cohost_unclaim:')) {
+    if (interaction.customId === 'verification_start') {
+      handleVerificationStart(interaction).catch((err) => {
+        console.error('handleVerificationStart error:', err);
+        if (!interaction.replied && !interaction.deferred) {
+          interaction.reply({ content: 'Something went wrong starting verification.', ephemeral: true }).catch(() => null);
+        }
+      });
+    } else if (interaction.customId.startsWith('cohost_unclaim:')) {
       handleCoHostUnclaim(interaction).catch((err) => {
         console.error('handleCoHostUnclaim error:', err);
         interaction.reply({ content: 'Something went wrong.', ephemeral: true }).catch(() => null);
