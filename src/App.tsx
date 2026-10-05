@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
 import { OAuthCallback } from '@/pages/OAuthCallback';
+import { Verify } from '@/pages/Verify';
 import { Onboarding } from '@/pages/Onboarding';
 import { Dashboard } from '@/pages/Dashboard';
 import { Profile } from '@/pages/Profile';
@@ -109,6 +110,7 @@ function AppRoutes() {
       {/* Public routes */}
       <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
       <Route path="/redirect" element={<OAuthCallback />} />
+      <Route path="/verify" element={<Verify />} />
       <Route path="/Service" element={<Terms />} />
       <Route path="/Privacy" element={<Privacy />} />
 
