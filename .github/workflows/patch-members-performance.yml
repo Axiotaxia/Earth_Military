@@ -1,0 +1,71 @@
+name: Patch member profiles
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-members-performance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const path = 'src/pages/Members.tsx';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.ref.replace('refs/heads/', '');
+
+            const file = await github.rest.repos.getContent({ owner, repo, path, ref: branch });
+            const current = Buffer.from(file.data.content, 'base64').toString('utf8');
+
+            const oldLoad = `    setLoading(true);\n    const { data: users } = await supabase\n      .from('users')\n      .select('*')\n      .order('group_rank', { ascending: false });\n\n    const { data: divs } = await supabase.from('divisions').select('*');\n    const { data: allRanks } = await supabase.from('division_ranks').select('*');\n    const { data: allMembers } = await supabase.from('division_members').select('*');`;
+            const newLoad = `    setLoading(true);\n    const [\n      { data: users },\n      { data: divs },\n      { data: allRanks },\n      { data: allMembers },\n      { data: pointSummary },\n    ] = await Promise.all([\n      supabase.from('users').select('*').order('group_rank', { ascending: false }),\n      supabase.from('divisions').select('*'),\n      supabase.from('division_ranks').select('*'),\n      supabase.from('division_members').select('*'),\n      supabase.rpc('get_member_points_summary'),\n    ]);`;
+
+            const oldPoints = `    // Get points for all users\n    const enriched: MemberWithDetails[] = [];\n    for (const u of users || []) {\n      const [{ data: pts }, { data: recentPts }] = await Promise.all([\n        supabase.rpc('get_user_military_points', { p_user_id: u.id }),\n        supabase.rpc('get_user_recent_points', { p_user_id: u.id }),\n      ]);\n      const memberInfo = memberMap.get(u.id);\n      enriched.push({\n        ...u,\n        division_name: memberInfo ? divMap.get(memberInfo.division_id)?.name || null : null,\n        division_rank_name: memberInfo && memberInfo.rank_id ? rankMap.get(memberInfo.rank_id)?.name || null : null,\n        military_points: pts || 0,\n        recent_points: recentPts || 0,\n      });\n    }`;
+            const newPoints = `    const pointMap = new Map((pointSummary || []).map((p) => [p.user_id, p]));\n    const enriched: MemberWithDetails[] = (users || []).map((u) => {\n      const memberInfo = memberMap.get(u.id);\n      const points = pointMap.get(u.id);\n      return {\n        ...u,\n        division_name: memberInfo ? divMap.get(memberInfo.division_id)?.name || null : null,\n        division_rank_name: memberInfo && memberInfo.rank_id ? rankMap.get(memberInfo.rank_id)?.name || null : null,\n        military_points: Number(points?.military_points || 0),\n        recent_points: Number(points?.recent_points || 0),\n      };\n    });`;
+
+            const oldState = `  const [filters, setFilters] = useState(EMPTY_FILTERS);`;
+            const newState = `  const [filters, setFilters] = useState(EMPTY_FILTERS);\n  const [sortBy, setSortBy] = useState<'default' | 'total' | 'recent'>('default');`;
+
+            const oldFilteredStart = `  const filtered = useMemo(() => members.filter((m) => {`;
+            const newFilteredStart = `  const filtered = useMemo(() => {\n    const result = members.filter((m) => {`;
+            const oldFilteredEnd = `    return true;\n  }), [members, search, filters, divisions, memberDivisionRankId]);`;
+            const newFilteredEnd = `      return true;\n    });\n\n    if (sortBy === 'total') {\n      result.sort((a, b) => b.military_points - a.military_points);\n    } else if (sortBy === 'recent') {\n      result.sort((a, b) => b.recent_points - a.recent_points);\n    }\n\n    return result;\n  }, [members, search, filters, divisions, memberDivisionRankId, sortBy]);`;
+
+            let next = current;
+            for (const [from, to] of [[oldLoad, newLoad], [oldPoints, newPoints], [oldState, newState], [oldFilteredStart, newFilteredStart], [oldFilteredEnd, newFilteredEnd]]) {
+              if (!next.includes(from)) throw new Error('Expected source text was not found during member patch');
+              next = next.replace(from, to);
+            }
+
+            const oldControls = `          <button\n            onClick={() => setShowFilters(!showFilters)\n            className={`;
+            const marker = `          <button\n            onClick={() => setShowFilters(!showFilters)`;
+            const idx = next.indexOf(marker);
+            if (idx < 0) throw new Error('Sort control insertion point not found');
+            const sortControl = `          <select\n            value={sortBy}\n            onChange={(e) => setSortBy(e.target.value as 'default' | 'total' | 'recent')}\n            className="ek-input text-sm w-44"\n            aria-label="Sort members"\n          >\n            <option value="default">Sort: Default</option>\n            <option value="total">Most Total Points</option>\n            <option value="recent">Most Recent Points</option>\n          </select>\n`;
+            next = next.slice(0, idx) + sortControl + next.slice(idx);
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path,
+              branch,
+              message: 'Optimize military profile loading and point sorting',
+              content: Buffer.from(next).toString('base64'),
+              sha: file.data.sha,
+            });
+
+            await github.rest.repos.deleteFile({
+              owner,
+              repo,
+              path: '.github/workflows/patch-members-performance.yml',
+              branch,
+              message: 'Remove temporary member patch workflow',
+              sha: (await github.rest.repos.getContent({ owner, repo, path: '.github/workflows/patch-members-performance.yml', ref: branch })).data.sha,
+            });
