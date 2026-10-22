@@ -128,7 +128,14 @@ export async function syncVerifiedMembers() {
   let failures = 0;
 
   for (const user of users) {
-    const member = await guild.members.fetch(user.discord_id).catch(() => null);
+    const member = await guild.members.fetch(user.discord_id).catch((error) => {
+      console.warn(
+        '[Verification] Skipping ' + user.roblox_username +
+        ': Discord member ' + user.discord_id + ' could not be fetched. The user may not be in the Military server. ' +
+        (error instanceof Error ? error.message : String(error)),
+      );
+      return null;
+    });
     if (!member) {
       skipped++;
       continue;
@@ -136,6 +143,14 @@ export async function syncVerifiedMembers() {
 
     // The bot must be above the member and both target roles in the role hierarchy.
     if (!member.manageable) {
+      const botMember = guild.members.me;
+      console.warn(
+        '[Verification] Skipping ' + user.roblox_username +
+        ': Discord member is not manageable. Bot highest role=' +
+        (botMember?.roles.highest?.name || 'unknown') +
+        ', member highest role=' + (member.roles.highest?.name || 'unknown') +
+        '. Move the bot role above this member in Server Settings > Roles.',
+      );
       skipped++;
       continue;
     }
