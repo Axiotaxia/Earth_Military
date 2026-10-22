@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { MessageFlags } from 'discord.js';
+import { MessageFlags, PermissionsBitField } from 'discord.js';
 import { client } from './client.js';
 import { config } from './config.js';
 import { db } from './supabase.js';
@@ -144,7 +144,7 @@ async function syncVerifiedMembersOnce() {
 
   const guild = await client.guilds.fetch(config.militaryServerId);
   const botMember = guild.members.me || await guild.members.fetch(client.user.id);
-  if (!botMember.permissions.has('ManageRoles')) {
+  if (!botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
     throw new Error('Bot is missing Manage Roles permission in the Military server.');
   }
 
