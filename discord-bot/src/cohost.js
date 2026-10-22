@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { client } from './client.js';
 import { db } from './supabase.js';
 import { resolveRobloxId } from './bloxlink.js';
@@ -50,18 +50,18 @@ export async function handleCoHostClaim(interaction) {
   const slotIndex = Number(slotIndexStr);
 
   if (!(await openEvent(eventId))) {
-    await interaction.reply({ content: 'This event is no longer taking co-hosts.', ephemeral: true });
+    await interaction.reply({ content: 'This event is no longer taking co-hosts.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const slots = await db.select('event_cohost_slots', `event_id=eq.${eventId}&select=*`);
   const targetSlot = slots.find((s) => s.slot_index === slotIndex);
   if (!targetSlot) {
-    await interaction.reply({ content: 'This co-host slot no longer exists.', ephemeral: true });
+    await interaction.reply({ content: 'This co-host slot no longer exists.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (targetSlot.claimed_by_discord_id) {
-    await interaction.reply({ content: 'Someone already claimed this slot.', ephemeral: true });
+    await interaction.reply({ content: 'Someone already claimed this slot.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -81,7 +81,7 @@ export async function handleCoHostClaim(interaction) {
   if (hasOpenClaim) {
     await interaction.reply({
       content: "You're already co-hosting an event. Unclaim that spot first if you want this one.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -103,11 +103,11 @@ export async function handleCoHostClaim(interaction) {
     },
   );
   if (updated.length === 0) {
-    await interaction.reply({ content: 'Someone just claimed this slot before you.', ephemeral: true });
+    await interaction.reply({ content: 'Someone just claimed this slot before you.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.reply({ content: `You're now co-hosting: ${targetSlot.label || 'this event'}.`, ephemeral: true });
+  await interaction.reply({ content: `You're now co-hosting: ${targetSlot.label || 'this event'}.`, flags: MessageFlags.Ephemeral });
   await refreshEventMessages(eventId);
 }
 
@@ -116,7 +116,7 @@ export async function handleCoHostUnclaim(interaction) {
   const [, eventId] = interaction.customId.split(':');
 
   if (!(await openEvent(eventId))) {
-    await interaction.reply({ content: 'This event has already started or ended.', ephemeral: true });
+    await interaction.reply({ content: 'This event has already started or ended.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -126,10 +126,10 @@ export async function handleCoHostUnclaim(interaction) {
     { claimed_by_discord_id: null, claimed_by_discord_username: null, claimed_by_roblox_user_id: null, claimed_at: null },
   );
   if (released.length === 0) {
-    await interaction.reply({ content: "You aren't co-hosting this event.", ephemeral: true });
+    await interaction.reply({ content: "You aren't co-hosting this event.", flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.reply({ content: 'You gave up your co-host spot.', ephemeral: true });
+  await interaction.reply({ content: 'You gave up your co-host spot.', flags: MessageFlags.Ephemeral });
   await refreshEventMessages(eventId);
 }
