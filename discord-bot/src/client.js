@@ -37,8 +37,8 @@ export async function startClient() {
   });
 
   try {
-    await client.login(config.discordToken);
-    await readyPromise;
+    const loginPromise = client.login(config.discordToken);
+    await Promise.race([loginPromise.then(() => readyPromise), readyPromise]);
   } catch (error) {
     clearTimeout(readyTimeout);
     if (readyHandler) client.off(Events.ClientReady, readyHandler);
