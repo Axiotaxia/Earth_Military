@@ -1,13 +1,25 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { MessageFlags } from 'discord.js';
 import { client } from './client.js';
 import { config } from './config.js';
 import { db } from './supabase.js';
 
 const TOKEN_TTL_MS = 10 * 60 * 1000;
 const SYNC_INTERVAL_MS = 60 * 1000;
+const EXCLUDED_ROBLOX_USER_IDS = new Set(['593587739']); // Beachec; immutable Roblox user ID.
+
+let syncInFlight = false;
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isUnknownGuildMember(error) {
+  return Number(error?.code ?? error?.rawError?.code) === 10007;
 }
 
 export function buildVerificationMessage() {
@@ -36,14 +48,17 @@ export function buildVerificationMessage() {
 
 export async function handleVerificationStart(interaction) {
   if (interaction.guildId !== config.militaryServerId) {
-    await interaction.reply({ content: 'Verification is only available in the Military server.', ephemeral: true });
+    await interaction.reply({
+      content: 'Verification is only available in the Military server.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
-  if (!config.verificationSiteUrl) {
+  if (!config.verificationSiteUrl || !config.verificationSiteUrl.startsWith('https://')) {
     await interaction.reply({
-      content: 'Verification is not configured yet. Please contact an administrator.',
-      ephemeral: true,
+      content: 'Verification is not configured correctly. Please contact an administrator.',
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -57,7 +72,8 @@ export async function handleVerificationStart(interaction) {
   });
 
   const siteUrl = config.verificationSiteUrl.replace(/\/$/, '');
-  const url = siteUrl + '/verify?token=' + encodeURIComponent(token);
+  const url = new URL('/verify', siteUrl);
+  url.searchParams.set('token', token);
 
   await interaction.reply({
     content: 'Your personal verification link is ready. It expires in 10 minutes and can only be used once.',
@@ -67,10 +83,10 @@ export async function handleVerificationStart(interaction) {
         type: 2,
         style: 5,
         label: 'Continue to Verification',
-        url,
+        url: url.toString(),
       }],
     }],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -82,7 +98,9 @@ export async function ensureVerificationMessage() {
 
   const guild = await client.guilds.fetch(config.militaryServerId);
   const channel = await guild.channels.fetch(config.militaryVerifyChannelId);
-  if (!channel?.isTextBased()) throw new Error('Military verification channel is not a text channel.');
+  if (!channel?.isTextBased() || !channel.messages) {
+    throw new Error('Configured Military verification channel is not a message-capable text channel.');
+  }
 
   const recent = await channel.messages.fetch({ limit: 50 });
   const existing = recent.find((message) =>
@@ -100,114 +118,182 @@ export async function ensureVerificationMessage() {
   }
 }
 
-export async function syncVerifiedMembers() {
+async function syncVerifiedMembersOnce() {
   if (!config.verificationRoleId || !config.enlistedRoleId) {
     console.warn('[Verification] Sync disabled: VERIFICATION_ROLE_ID or ENLISTED_ROLE_ID is missing.');
     return;
   }
 
-  const users = (await db.select(
+  const allLinkedEligible = await db.select(
     'users',
-    'select=id,roblox_username,roblox_display_name,timezone,group_rank,discord_id&group_rank=gte.2&discord_id=not.is.null&order=roblox_user_id',
-  )).filter((user) => (user.roblox_username || '').toLowerCase() !== 'beachec');
+    'select=id,roblox_user_id,roblox_username,roblox_display_name,timezone,group_rank,discord_id&group_rank=gte.2&discord_id=not.is.null&order=roblox_user_id',
+  );
+
+  const users = allLinkedEligible.filter(
+    (user) => !EXCLUDED_ROBLOX_USER_IDS.has(String(user.roblox_user_id)),
+  );
+  const excluded = allLinkedEligible.length - users.length;
+
+  const discordIdCounts = new Map();
+  for (const user of users) {
+    discordIdCounts.set(user.discord_id, (discordIdCounts.get(user.discord_id) || 0) + 1);
+  }
+  const duplicateDiscordIds = new Set(
+    [...discordIdCounts].filter(([, count]) => count > 1).map(([discordId]) => discordId),
+  );
 
   const guild = await client.guilds.fetch(config.militaryServerId);
+  const botMember = guild.members.me || await guild.members.fetch(client.user.id);
+  if (!botMember.permissions.has('ManageRoles')) {
+    throw new Error('Bot is missing Manage Roles permission in the Military server.');
+  }
+
   const verificationRole = await guild.roles.fetch(config.verificationRoleId);
   const enlistedRole = await guild.roles.fetch(config.enlistedRoleId);
 
   if (!verificationRole) {
     throw new Error('Configured VERIFICATION_ROLE_ID does not exist in the Military server.');
   }
-
   if (!enlistedRole) {
     throw new Error('Configured ENLISTED_ROLE_ID does not exist in the Military server.');
+  }
+  if (!verificationRole.editable) {
+    throw new Error('Bot cannot manage the Verify role. Move the bot role above Verify in Server Settings > Roles.');
+  }
+  if (!enlistedRole.editable) {
+    throw new Error('Bot cannot manage the Enlisted role. Move the bot role above Enlisted in Server Settings > Roles.');
+  }
+  if (verificationRole.id === enlistedRole.id) {
+    throw new Error('VERIFICATION_ROLE_ID and ENLISTED_ROLE_ID must refer to different Discord roles.');
   }
 
   let processed = 0;
   let skipped = 0;
-  let failures = 0;
+  let lookupFailures = 0;
+  let roleFailures = 0;
+  let nicknameFailures = 0;
 
   for (const user of users) {
-    const member = await guild.members.fetch(user.discord_id).catch((error) => {
-      console.warn(
-        '[Verification] Skipping ' + user.roblox_username +
-        ': Discord member ' + user.discord_id + ' could not be fetched. The user may not be in the Military server. ' +
-        (error instanceof Error ? error.message : String(error)),
-      );
-      return null;
-    });
-    if (!member) {
+    if (duplicateDiscordIds.has(user.discord_id)) {
       skipped++;
+      console.error(
+        '[Verification] Skipping Roblox user ' + user.roblox_username +
+        ': Discord account ' + user.discord_id +
+        ' is linked to multiple database profiles. Resolve the duplicate link before syncing roles.',
+      );
       continue;
     }
 
-    // The bot must be above the member and both target roles in the role hierarchy.
-    if (!member.manageable) {
-      const botMember = guild.members.me;
-      console.warn(
-        '[Verification] Skipping ' + user.roblox_username +
-        ': Discord member is not manageable. Bot highest role=' +
-        (botMember?.roles.highest?.name || 'unknown') +
-        ', member highest role=' + (member.roles.highest?.name || 'unknown') +
-        '. Move the bot role above this member in Server Settings > Roles.',
-      );
-      skipped++;
+    let member;
+    try {
+      member = await guild.members.fetch(user.discord_id);
+    } catch (error) {
+      if (isUnknownGuildMember(error)) {
+        skipped++;
+        console.warn(
+          '[Verification] Roblox user ' + user.roblox_username +
+          ' is linked to Discord ' + user.discord_id +
+          ', but that account is not in the Military server.',
+        );
+      } else {
+        lookupFailures++;
+        console.error(
+          '[Verification] Could not fetch Discord member for ' + user.roblox_username +
+          ' (' + user.discord_id + '): ' + errorMessage(error),
+        );
+      }
       continue;
     }
 
     processed++;
 
-    if (!member.roles.cache.has(enlistedRole.id)) {
+    // Do not gate role assignment on member.manageable: that property also
+    // checks whether the bot can moderate the member. Role changes instead
+    // require Manage Roles and the bot's highest role to be above each target role.
+    let hasEnlisted = member.roles.cache.has(enlistedRole.id);
+    if (!hasEnlisted) {
       try {
-        await member.roles.add(enlistedRole, 'Military account verification');
+        await member.roles.add(enlistedRole, 'Roblox account verified for Earth Kingdom Military');
+        hasEnlisted = true;
+        console.log('[Verification] Added Enlisted role to ' + user.roblox_username + '.');
       } catch (error) {
-        failures++;
+        roleFailures++;
         console.error(
-          '[Verification] Could not add Enlisted role to ' + user.roblox_username +
-          ' (Discord ' + user.discord_id + '). Check Manage Roles permission and ensure the bot role is above the Enlisted role. ' +
-          (error instanceof Error ? error.message : String(error)),
+          '[Verification] Failed to add Enlisted to ' + user.roblox_username +
+          ' (' + user.discord_id + '): ' + errorMessage(error),
         );
       }
     }
 
-    // Keep this separate so a failed Enlisted-role add does not prevent removal
-    // of the Verify role when Discord permits that operation.
-    if (member.roles.cache.has(verificationRole.id)) {
+    // Only remove Verify once Enlisted is present or was successfully added.
+    // This avoids accidentally removing the member's access role if adding Enlisted fails.
+    if (hasEnlisted && member.roles.cache.has(verificationRole.id)) {
       try {
-        await member.roles.remove(verificationRole, 'Military account verification');
+        await member.roles.remove(verificationRole, 'Roblox account verified for Earth Kingdom Military');
+        console.log('[Verification] Removed Verify role from ' + user.roblox_username + '.');
       } catch (error) {
-        failures++;
+        roleFailures++;
         console.error(
-          '[Verification] Could not remove Verify role from ' + user.roblox_username +
-          ' (Discord ' + user.discord_id + '). Check Manage Roles permission and role hierarchy. ' +
-          (error instanceof Error ? error.message : String(error)),
+          '[Verification] Failed to remove Verify from ' + user.roblox_username +
+          ' (' + user.discord_id + '): ' + errorMessage(error),
         );
       }
     }
 
-    const fullUser = user.roblox_display_name || user.roblox_username;
+    const displayName = user.roblox_display_name || user.roblox_username || 'Military Member';
     const timezone = user.timezone || 'Timezone not set';
-    const nickname = (fullUser + ' | ' + timezone).slice(0, 32);
+    const nickname = (displayName + ' | ' + timezone).slice(0, 32);
 
     if (member.nickname !== nickname) {
-      await member.setNickname(nickname, 'Military account verification').catch((error) => {
-        console.error(
-          '[Verification] Failed to rename ' + user.roblox_username + ': ' +
-          (error instanceof Error ? error.message : String(error)),
+      if (!member.manageable) {
+        nicknameFailures++;
+        console.warn(
+          '[Verification] Roles processed for ' + user.roblox_username +
+          ', but nickname cannot be changed because the bot is not above the member\'s highest role.',
         );
-      });
+      } else {
+        try {
+          await member.setNickname(nickname, 'Roblox account verified for Earth Kingdom Military');
+        } catch (error) {
+          nicknameFailures++;
+          console.error(
+            '[Verification] Failed to set nickname for ' + user.roblox_username +
+            ' (' + user.discord_id + '): ' + errorMessage(error),
+          );
+        }
+      }
     }
   }
 
   console.log(
-    '[Verification] Sync complete: eligible=' + users.length +
-    ', processed=' + processed + ', skipped=' + skipped + ', roleFailures=' + failures,
+    '[Verification] Sync complete: linkedEligible=' + allLinkedEligible.length +
+    ', excluded=' + excluded +
+    ', eligible=' + users.length +
+    ', processed=' + processed +
+    ', skipped=' + skipped +
+    ', lookupFailures=' + lookupFailures +
+    ', roleFailures=' + roleFailures +
+    ', nicknameFailures=' + nicknameFailures,
   );
+}
+
+export async function syncVerifiedMembers() {
+  if (syncInFlight) {
+    console.warn('[Verification] Previous sync is still running; skipping overlapping run.');
+    return;
+  }
+
+  syncInFlight = true;
+  try {
+    await syncVerifiedMembersOnce();
+  } finally {
+    syncInFlight = false;
+  }
 }
 
 export function startVerificationSync() {
   const run = () => syncVerifiedMembers().catch((error) => {
-    console.error('[Verification] Sync failed:', error);
+    console.error('[Verification] Sync failed:', errorMessage(error));
   });
 
   run();
