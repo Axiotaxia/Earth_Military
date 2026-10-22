@@ -102,6 +102,7 @@ export async function ensureVerificationMessage() {
 
 export async function syncVerifiedMembers() {
   if (!config.verificationRoleId || !config.enlistedRoleId) {
+    console.warn('[Verification] Sync disabled: VERIFICATION_ROLE_ID or ENLISTED_ROLE_ID is missing.');
     return;
   }
 
@@ -122,19 +123,51 @@ export async function syncVerifiedMembers() {
     throw new Error('Configured ENLISTED_ROLE_ID does not exist in the Military server.');
   }
 
+  let processed = 0;
+  let skipped = 0;
+  let failures = 0;
+
   for (const user of users) {
     const member = await guild.members.fetch(user.discord_id).catch(() => null);
-    if (!member) continue;
-
-    // Ignore members the bot cannot manage, such as members ranked above the bot.
-    if (!member.manageable) continue;
-
-    if (!member.roles.cache.has(enlistedRole.id)) {
-      await member.roles.add(enlistedRole, 'Military account verification');
+    if (!member) {
+      skipped++;
+      continue;
     }
 
+    // The bot must be above the member and both target roles in the role hierarchy.
+    if (!member.manageable) {
+      skipped++;
+      continue;
+    }
+
+    processed++;
+
+    if (!member.roles.cache.has(enlistedRole.id)) {
+      try {
+        await member.roles.add(enlistedRole, 'Military account verification');
+      } catch (error) {
+        failures++;
+        console.error(
+          '[Verification] Could not add Enlisted role to ' + user.roblox_username +
+          ' (Discord ' + user.discord_id + '). Check Manage Roles permission and ensure the bot role is above the Enlisted role. ' +
+          (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+
+    // Keep this separate so a failed Enlisted-role add does not prevent removal
+    // of the Verify role when Discord permits that operation.
     if (member.roles.cache.has(verificationRole.id)) {
-      await member.roles.remove(verificationRole, 'Military account verification');
+      try {
+        await member.roles.remove(verificationRole, 'Military account verification');
+      } catch (error) {
+        failures++;
+        console.error(
+          '[Verification] Could not remove Verify role from ' + user.roblox_username +
+          ' (Discord ' + user.discord_id + '). Check Manage Roles permission and role hierarchy. ' +
+          (error instanceof Error ? error.message : String(error)),
+        );
+      }
     }
 
     const fullUser = user.roblox_display_name || user.roblox_username;
@@ -150,6 +183,11 @@ export async function syncVerifiedMembers() {
       });
     }
   }
+
+  console.log(
+    '[Verification] Sync complete: eligible=' + users.length +
+    ', processed=' + processed + ', skipped=' + skipped + ', roleFailures=' + failures,
+  );
 }
 
 export function startVerificationSync() {
