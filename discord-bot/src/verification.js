@@ -106,10 +106,10 @@ export async function syncVerifiedMembers() {
     return;
   }
 
-  const users = await db.select(
+  const users = (await db.select(
     'users',
     'select=id,roblox_username,roblox_display_name,timezone,group_rank,discord_id&group_rank=gte.2&discord_id=not.is.null&order=roblox_user_id',
-  );
+  )).filter((user) => (user.roblox_username || '').toLowerCase() !== 'beachec');
 
   const guild = await client.guilds.fetch(config.militaryServerId);
   const verificationRole = await guild.roles.fetch(config.verificationRoleId);
