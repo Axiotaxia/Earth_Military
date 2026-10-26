@@ -65,6 +65,33 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const SESSION_KEY = 'ek_session_user_id';
+const VERIFICATION_PENDING_KEY = 'ek_discord_verification_pending';
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+function savePendingToken(token: string) {
+  sessionStorage.setItem(VERIFICATION_PENDING_KEY, token);
+  try {
+    localStorage.setItem(VERIFICATION_PENDING_KEY, JSON.stringify({ token, at: Date.now() }));
+  } catch { /* storage blocked */ }
+}
+
+function readPendingToken(): string | null {
+  const fromSession = sessionStorage.getItem(VERIFICATION_PENDING_KEY);
+  if (fromSession) return fromSession;
+  try {
+    const raw = localStorage.getItem(VERIFICATION_PENDING_KEY);
+    if (!raw) return null;
+    const { token, at } = JSON.parse(raw);
+    return token && Date.now() - at < PENDING_TTL_MS ? String(token) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingToken() {
+  sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+  try { localStorage.removeItem(VERIFICATION_PENDING_KEY); } catch { /* storage blocked */ }
+}
 
 function getBaseUrl(): string {
   return window.location.origin;
@@ -174,30 +201,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
-  const VERIFICATION_PENDING_KEY = 'ek_discord_verification_pending';
-
   const loginWithRoblox = useCallback((state?: string) => {
+    // Login.tsx passes the click event here; only a real string token counts.
+    const token = typeof state === 'string' && state.length > 0 ? state : undefined;
     const url = new URL(buildRobloxAuthUrl());
-    if (state) {
-      // The callback must not silently downgrade a Discord verification into a normal site login.
-      sessionStorage.setItem(VERIFICATION_PENDING_KEY, state);
-      url.searchParams.set('state', state);
+    if (token) {
+      savePendingToken(token);
+      url.searchParams.set('state', token);
       console.info('[VerificationFlow][BROWSER_OAUTH_STARTED] verificationStateAttached=true');
     } else {
-      sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+      clearPendingToken();
     }
     window.location.href = url.toString();
   }, []);
 
   const handleOAuthCallback = useCallback(
     async (code: string, state?: string) => {
-      const pendingState = sessionStorage.getItem(VERIFICATION_PENDING_KEY);
+      const pendingState = readPendingToken();
       const verificationPending = Boolean(pendingState);
-      // Roblox may omit the OAuth state on its redirect. The original single-use
-      // Discord token survives in this tab's sessionStorage, so recover it here.
+      // Roblox may omit OAuth state. Recover the single-use Discord token from browser storage.
       const effectiveState = state || pendingState || undefined;
       if (verificationPending && !effectiveState) {
-        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        clearPendingToken();
         console.error('[VerificationFlow][BROWSER_STATE_MISSING] Verification was pending but neither callback nor session contained state.');
         throw new Error('Discord verification failed because its token was missing. Return to Discord and press Verify to create a new link. (STATE_MISSING)');
       }
@@ -217,7 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ code, redirect_uri: redirectUri, state: effectiveState || null }),
         });
       } catch (error) {
-        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        clearPendingToken();
         console.error('[VerificationFlow][BROWSER_FUNCTION_REQUEST_FAILED]', error);
         throw new Error('Could not contact the verification service. Check your connection and create a new link in Discord. (FUNCTION_REQUEST_FAILED)');
       }
@@ -226,25 +251,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         data = await resp.json();
       } catch {
-        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        clearPendingToken();
         console.error('[VerificationFlow][BROWSER_INVALID_FUNCTION_RESPONSE] status=' + resp.status);
         throw new Error('The verification service returned an unreadable response. Please try again. (INVALID_FUNCTION_RESPONSE)');
       }
 
       if (!resp.ok || data.error) {
-        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        clearPendingToken();
         const code = typeof data.code === 'string' ? data.code : 'OAUTH_REQUEST_FAILED';
         console.error('[VerificationFlow][BROWSER_FUNCTION_REJECTED] status=' + resp.status + ' code=' + code + ' message=' + (data.error || 'Unknown error'));
         throw new Error((data.error || 'Authentication failed.') + ' (' + code + ')');
       }
 
       if (verificationPending && data.verification !== true) {
-        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        clearPendingToken();
         console.error('[VerificationFlow][BROWSER_VERIFICATION_NOT_CONFIRMED] state was sent but backend did not confirm verification.');
         throw new Error('The server did not confirm the Discord account link. No success was reported. Please create a new link in Discord. (VERIFICATION_NOT_CONFIRMED)');
       }
 
-      sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+      clearPendingToken();
       localStorage.setItem(SESSION_KEY, data.user_id);
       // Older deployments of the login function don't issue a token; the rest
       // of the site still works, only Host Events needs it.
