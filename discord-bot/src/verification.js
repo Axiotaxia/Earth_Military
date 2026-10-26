@@ -335,37 +335,56 @@ async function syncVerifiedMembersOnce() {
     if (!memberHasEnlisted) {
       try {
         await member.roles.add(enlistedRole, 'Roblox account verified for Earth Kingdom Military');
-        member = await guild.members.fetch({ user: user.discord_id, force: true });
-        memberHasEnlisted = member.roles.cache.has(enlistedRole.id);
-        if (memberHasEnlisted) {
-          console.info('[Verification][ENLISTED_ADD_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
-        } else {
-          counters.enlistedAddFailures++;
-          counters.roleStateFailures++;
-          console.error('[Verification][ENLISTED_ADD_NOT_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id + ' action=keep_verify_role');
-        }
+        console.info('[Verification][ENLISTED_ADD_REQUEST_SUCCEEDED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
       } catch (error) {
         counters.enlistedAddFailures++;
         logDiscordFailure('ENLISTED_ADD_FAILED', user, error);
-        continue; // Never remove Verify if Enlisted could not be confirmed.
+        continue; // Never remove Verify if Enlisted could not be assigned.
+      }
+
+      try {
+        member = await guild.members.fetch({ user: user.discord_id, force: true });
+      } catch (error) {
+        counters.roleStateFailures++;
+        logDiscordFailure('ENLISTED_CONFIRM_FETCH_FAILED', user, error);
+        continue; // The role request succeeded, but do not remove Verify until state can be confirmed.
+      }
+
+      memberHasEnlisted = member.roles.cache.has(enlistedRole.id);
+      if (memberHasEnlisted) {
+        console.info('[Verification][ENLISTED_ADD_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
+      } else {
+        counters.enlistedAddFailures++;
+        counters.roleStateFailures++;
+        console.error('[Verification][ENLISTED_ADD_NOT_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id + ' action=keep_verify_role');
+        continue;
       }
     }
 
     if (memberHasEnlisted && memberHasVerify) {
       try {
         await member.roles.remove(verificationRole, 'Roblox account verified for Earth Kingdom Military');
-        member = await guild.members.fetch({ user: user.discord_id, force: true });
-        memberHasVerify = member.roles.cache.has(verificationRole.id);
-        if (!memberHasVerify) {
-          console.info('[Verification][VERIFY_REMOVE_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
-        } else {
-          counters.verifyRemoveFailures++;
-          counters.roleStateFailures++;
-          console.error('[Verification][VERIFY_REMOVE_NOT_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
-        }
+        console.info('[Verification][VERIFY_REMOVE_REQUEST_SUCCEEDED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
       } catch (error) {
         counters.verifyRemoveFailures++;
         logDiscordFailure('VERIFY_REMOVE_FAILED', user, error);
+      }
+
+      if (memberHasVerify) {
+        try {
+          member = await guild.members.fetch({ user: user.discord_id, force: true });
+          memberHasVerify = member.roles.cache.has(verificationRole.id);
+          if (!memberHasVerify) {
+            console.info('[Verification][VERIFY_REMOVE_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
+          } else {
+            counters.verifyRemoveFailures++;
+            counters.roleStateFailures++;
+            console.error('[Verification][VERIFY_REMOVE_NOT_CONFIRMED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
+          }
+        } catch (error) {
+          counters.roleStateFailures++;
+          logDiscordFailure('VERIFY_CONFIRM_FETCH_FAILED', user, error);
+        }
       }
     }
 
