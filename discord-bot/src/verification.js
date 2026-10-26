@@ -211,12 +211,6 @@ async function syncVerifiedMembersOnce() {
   counters.excluded = linkedUsers.length - users.length;
   counters.eligible = users.length;
 
-  for (const user of linkedUsers) {
-    if (EXCLUDED_ROBLOX_USER_IDS.has(String(user.roblox_user_id))) {
-      console.info('[Verification][PROFILE_EXCLUDED_BY_POLICY] roblox=' + user.roblox_username + ' robloxId=' + user.roblox_user_id);
-    }
-  }
-
   let guild;
   let botMember;
   let verificationRole;
@@ -286,15 +280,6 @@ async function syncVerifiedMembersOnce() {
     [...discordIdCounts].filter(([, count]) => count > 1).map(([id]) => id),
   );
 
-  console.info(
-    '[Verification][SYNC_STARTED] guild=' + guild.id +
-    ' linkedEligible=' + counters.linkedEligible +
-    ' excluded=' + counters.excluded +
-    ' eligible=' + counters.eligible +
-    ' verifyRole=' + verificationRole.name + '(' + verificationRole.id + ')' +
-    ' enlistedRole=' + enlistedRole.name + '(' + enlistedRole.id + ')',
-  );
-
   for (const user of users) {
     if (duplicateDiscordIds.has(user.discord_id)) {
       counters.duplicateLinks++;
@@ -327,10 +312,7 @@ async function syncVerifiedMembersOnce() {
     counters.processed++;
     let memberHasEnlisted = member.roles.cache.has(enlistedRole.id);
     let memberHasVerify = member.roles.cache.has(verificationRole.id);
-    if (memberHasEnlisted && !memberHasVerify) {
-      counters.alreadyCorrect++;
-      console.info('[Verification][MEMBER_ALREADY_CORRECT] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
-    }
+    if (memberHasEnlisted && !memberHasVerify) counters.alreadyCorrect++;
 
     if (!memberHasEnlisted) {
       try {
@@ -413,9 +395,14 @@ async function syncVerifiedMembersOnce() {
     }
   }
 
-  console.info(
-    '[Verification][SYNC_FINISHED] ' + Object.entries(counters).map(([key, value]) => key + '=' + value).join(' '),
-  );
+  // Only log when something went wrong or changed; otherwise this prints every minute.
+  const quietKeys = new Set(['linkedEligible', 'excluded', 'eligible', 'processed', 'alreadyCorrect']);
+  const hasNews = Object.entries(counters).some(([key, value]) => !quietKeys.has(key) && value > 0);
+  if (hasNews) {
+    console.info(
+      '[Verification][SYNC_FINISHED] ' + Object.entries(counters).map(([key, value]) => key + '=' + value).join(' '),
+    );
+  }
 }
 
 export async function syncVerifiedMembers() {
