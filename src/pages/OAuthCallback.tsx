@@ -20,6 +20,7 @@ export function OAuthCallback() {
 
     if (err) {
       sessionStorage.removeItem('ek_discord_verification_pending');
+      localStorage.removeItem('ek_discord_verification_pending');
       console.error('[VerificationFlow][ROBLOX_AUTHORIZATION_DENIED] error=' + err + ' statePresent=' + Boolean(state));
       setError(`Roblox authorization failed: ${err}`);
       return;
@@ -27,6 +28,7 @@ export function OAuthCallback() {
 
     if (!code) {
       sessionStorage.removeItem('ek_discord_verification_pending');
+      localStorage.removeItem('ek_discord_verification_pending');
       console.error('[VerificationFlow][CALLBACK_CODE_MISSING] statePresent=' + Boolean(state));
       setError('No authorization code was returned by Roblox. Start verification again from Discord. (CALLBACK_CODE_MISSING)');
       return;
