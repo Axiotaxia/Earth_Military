@@ -180,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const url = new URL(buildRobloxAuthUrl());
     if (state) {
       // The callback must not silently downgrade a Discord verification into a normal site login.
-      sessionStorage.setItem(VERIFICATION_PENDING_KEY, '1');
+      sessionStorage.setItem(VERIFICATION_PENDING_KEY, state);
       url.searchParams.set('state', state);
       console.info('[VerificationFlow][BROWSER_OAUTH_STARTED] verificationStateAttached=true');
     } else {
@@ -191,17 +191,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const handleOAuthCallback = useCallback(
     async (code: string, state?: string) => {
-      const verificationPending = sessionStorage.getItem(VERIFICATION_PENDING_KEY) === '1';
-      if (verificationPending && !state) {
+      const pendingState = sessionStorage.getItem(VERIFICATION_PENDING_KEY);
+      const verificationPending = Boolean(pendingState);
+      // Roblox may omit the OAuth state on its redirect. The original single-use
+      // Discord token survives in this tab's sessionStorage, so recover it here.
+      const effectiveState = state || pendingState || undefined;
+      if (verificationPending && !effectiveState) {
         sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
-        console.error('[VerificationFlow][BROWSER_STATE_MISSING] A verification flow returned without OAuth state.');
-        throw new Error('Discord verification failed because Roblox did not return the verification state. Return to Discord and press Verify to create a new link. (STATE_MISSING)');
+        console.error('[VerificationFlow][BROWSER_STATE_MISSING] Verification was pending but neither callback nor session contained state.');
+        throw new Error('Discord verification failed because its token was missing. Return to Discord and press Verify to create a new link. (STATE_MISSING)');
       }
 
       const redirectUri = `${getBaseUrl()}/redirect`;
       const funcUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/roblox-oauth`;
 
-      console.info('[VerificationFlow][BROWSER_CALLBACK_RECEIVED] verificationPending=' + verificationPending + ' statePresent=' + Boolean(state));
+      console.info('[VerificationFlow][BROWSER_CALLBACK_RECEIVED] verificationPending=' + verificationPending + ' statePresent=' + Boolean(effectiveState));
       let resp: Response;
       try {
         resp = await fetch(funcUrl, {
@@ -210,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           },
-          body: JSON.stringify({ code, redirect_uri: redirectUri, state: state || null }),
+          body: JSON.stringify({ code, redirect_uri: redirectUri, state: effectiveState || null }),
         });
       } catch (error) {
         sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
