@@ -362,15 +362,17 @@ async function syncVerifiedMembersOnce() {
     }
 
     if (memberHasEnlisted && memberHasVerify) {
+      let removeRequestSucceeded = false;
       try {
         await member.roles.remove(verificationRole, 'Roblox account verified for Earth Kingdom Military');
+        removeRequestSucceeded = true;
         console.info('[Verification][VERIFY_REMOVE_REQUEST_SUCCEEDED] roblox=' + user.roblox_username + ' discordId=' + user.discord_id);
       } catch (error) {
         counters.verifyRemoveFailures++;
         logDiscordFailure('VERIFY_REMOVE_FAILED', user, error);
       }
 
-      if (memberHasVerify) {
+      if (removeRequestSucceeded) {
         try {
           member = await guild.members.fetch({ user: user.discord_id, force: true });
           memberHasVerify = member.roles.cache.has(verificationRole.id);
