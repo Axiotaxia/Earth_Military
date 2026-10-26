@@ -19,18 +19,25 @@ export function OAuthCallback() {
     const state = searchParams.get('state') || undefined;
 
     if (err) {
+      sessionStorage.removeItem('ek_discord_verification_pending');
+      console.error('[VerificationFlow][ROBLOX_AUTHORIZATION_DENIED] error=' + err + ' statePresent=' + Boolean(state));
       setError(`Roblox authorization failed: ${err}`);
       return;
     }
 
     if (!code) {
-      setError('No authorization code received from Roblox.');
+      sessionStorage.removeItem('ek_discord_verification_pending');
+      console.error('[VerificationFlow][CALLBACK_CODE_MISSING] statePresent=' + Boolean(state));
+      setError('No authorization code was returned by Roblox. Start verification again from Discord. (CALLBACK_CODE_MISSING)');
       return;
     }
 
     handleOAuthCallback(code, state)
       .then((result) => navigate(result.verification ? '/verify?success=1' : '/dashboard'))
-      .catch((e) => setError(e.message || 'Authentication failed'));
+      .catch((e) => {
+        console.error('[VerificationFlow][CALLBACK_FAILED] ' + (e?.message || String(e)));
+        setError(e.message || 'Authentication failed');
+      });
   }, [searchParams, handleOAuthCallback, navigate]);
 
   return (
