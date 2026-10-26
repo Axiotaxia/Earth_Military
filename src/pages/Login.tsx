@@ -45,7 +45,7 @@ export function Login() {
           </p>
 
           <button
-            onClick={loginWithRoblox}
+            onClick={() => loginWithRoblox()}
             className="ek-btn ek-btn-primary w-full flex items-center justify-center gap-3 text-base py-3 mb-4"
           >
             <Shield className="w-5 h-5" />
