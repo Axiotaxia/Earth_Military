@@ -174,39 +174,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
+  const VERIFICATION_PENDING_KEY = 'ek_discord_verification_pending';
+
   const loginWithRoblox = useCallback((state?: string) => {
     const url = new URL(buildRobloxAuthUrl());
-    if (state) url.searchParams.set('state', state);
+    if (state) {
+      // The callback must not silently downgrade a Discord verification into a normal site login.
+      sessionStorage.setItem(VERIFICATION_PENDING_KEY, '1');
+      url.searchParams.set('state', state);
+      console.info('[VerificationFlow][BROWSER_OAUTH_STARTED] verificationStateAttached=true');
+    } else {
+      sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+    }
     window.location.href = url.toString();
   }, []);
 
   const handleOAuthCallback = useCallback(
     async (code: string, state?: string) => {
+      const verificationPending = sessionStorage.getItem(VERIFICATION_PENDING_KEY) === '1';
+      if (verificationPending && !state) {
+        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        console.error('[VerificationFlow][BROWSER_STATE_MISSING] A verification flow returned without OAuth state.');
+        throw new Error('Discord verification failed because Roblox did not return the verification state. Return to Discord and press Verify to create a new link. (STATE_MISSING)');
+      }
+
       const redirectUri = `${getBaseUrl()}/redirect`;
       const funcUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/roblox-oauth`;
 
-      const resp = await fetch(funcUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ code, redirect_uri: redirectUri, state: state || null }),
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text();
-        throw new Error(`OAuth failed: ${errText}`);
+      console.info('[VerificationFlow][BROWSER_CALLBACK_RECEIVED] verificationPending=' + verificationPending + ' statePresent=' + Boolean(state));
+      let resp: Response;
+      try {
+        resp = await fetch(funcUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ code, redirect_uri: redirectUri, state: state || null }),
+        });
+      } catch (error) {
+        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        console.error('[VerificationFlow][BROWSER_FUNCTION_REQUEST_FAILED]', error);
+        throw new Error('Could not contact the verification service. Check your connection and create a new link in Discord. (FUNCTION_REQUEST_FAILED)');
       }
 
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error);
+      let data: any;
+      try {
+        data = await resp.json();
+      } catch {
+        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        console.error('[VerificationFlow][BROWSER_INVALID_FUNCTION_RESPONSE] status=' + resp.status);
+        throw new Error('The verification service returned an unreadable response. Please try again. (INVALID_FUNCTION_RESPONSE)');
+      }
 
+      if (!resp.ok || data.error) {
+        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        const code = typeof data.code === 'string' ? data.code : 'OAUTH_REQUEST_FAILED';
+        console.error('[VerificationFlow][BROWSER_FUNCTION_REJECTED] status=' + resp.status + ' code=' + code + ' message=' + (data.error || 'Unknown error'));
+        throw new Error((data.error || 'Authentication failed.') + ' (' + code + ')');
+      }
+
+      if (verificationPending && data.verification !== true) {
+        sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
+        console.error('[VerificationFlow][BROWSER_VERIFICATION_NOT_CONFIRMED] state was sent but backend did not confirm verification.');
+        throw new Error('The server did not confirm the Discord account link. No success was reported. Please create a new link in Discord. (VERIFICATION_NOT_CONFIRMED)');
+      }
+
+      sessionStorage.removeItem(VERIFICATION_PENDING_KEY);
       localStorage.setItem(SESSION_KEY, data.user_id);
       // Older deployments of the login function don't issue a token; the rest
       // of the site still works, only Host Events needs it.
       setSessionToken(data.session_token || null);
       await refreshUser();
+      console.info('[VerificationFlow][BROWSER_AUTH_SUCCEEDED] verification=' + Boolean(data.verification));
       return { verification: !!data.verification };
     },
     [refreshUser]
