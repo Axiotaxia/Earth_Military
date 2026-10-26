@@ -90,13 +90,16 @@ export async function handleVerificationStart(interaction) {
 
   const token = randomBytes(32).toString('hex');
   try {
-    await db.insert('discord_verification_tokens', {
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
+    const insertedRows = await db.insert('discord_verification_tokens', {
       token_hash: hashToken(token),
       discord_id: interaction.user.id,
       discord_username: interaction.user.username,
-      expires_at: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
+      expires_at: expiresAt,
     });
-    console.info('[Verification][TOKEN_CREATED] ' + actor + ' expiresInSeconds=600 site=' + siteUrl.origin);
+    const tokenRowId = insertedRows?.[0]?.id;
+    if (!tokenRowId) throw new Error('Supabase inserted the token without returning its row ID.');
+    console.info('[Verification][TOKEN_CREATED] ' + actor + ' tokenRowId=' + tokenRowId + ' expiresAt=' + expiresAt + ' site=' + siteUrl.origin);
   } catch (error) {
     console.error('[Verification][TOKEN_CREATE_DB_FAILED] ' + actor + ' error=' + String(error));
     await interaction.reply({
