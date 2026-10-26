@@ -311,7 +311,7 @@ Deno.serve(async (req: Request) => {
     }
 
     let userId: string;
-    const profilePatch: Record<string, unknown> = {
+    const profilePatch: Record<string, any> = {
       roblox_username: userInfo.preferred_username,
       roblox_display_name: userInfo.name,
       roblox_avatar_url: userInfo.picture ?? null,
@@ -346,7 +346,7 @@ Deno.serve(async (req: Request) => {
         }
       }
     } else {
-      const insertRow: Record<string, unknown> = {
+      const insertRow: Record<string, any> = {
         roblox_user_id: robloxUserId,
         ...profilePatch,
         onboarded: false,
